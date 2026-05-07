@@ -5,7 +5,7 @@ import type { Env } from '../types/env';
 
 export const authRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/auth' });
 
-const GOOGLE_REDIRECT_URI = 'https://web-mu-ochre-87.vercel.app/auth/google-callback';
+const GOOGLE_REDIRECT_URI = 'https://stemfer.com/auth/google-callback';
 const ADMIN_EMAIL         = 'ibokchris@gmail.com';
 
 // GET /auth/me

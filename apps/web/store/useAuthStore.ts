@@ -3,7 +3,7 @@ import { create }   from 'zustand';
 import { persist }  from 'zustand/middleware';
 import type { User } from '@stemfer/shared/types';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://stemfer-api.ibokchris.workers.dev';
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.stemfer.com';
 
 interface AuthState {
   user:    User | null;
