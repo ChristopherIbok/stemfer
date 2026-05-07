@@ -16,8 +16,8 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./*"],
-      "@stemfer/shared/types": ["./lib/types/index.ts"],
-      "@stemfer/shared/utils/timecode": ["./lib/utils/timecode.ts"]
+      "@stemfer/shared/types": ["../../packages/shared/types/index.ts"],
+      "@stemfer/shared/utils/timecode": ["../../packages/shared/utils/timecode.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

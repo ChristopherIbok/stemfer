@@ -213,7 +213,7 @@ const StoragePill = memo(function StoragePill({
   storageRatio, user,
 }: {
   storageRatio: number;
-  user: ReturnType<typeof useAuthStore>['user'];
+  user: import('@stemfer/shared/types').User | null;
 }) {
   const color = storageRatio > 0.9 ? '#ef4444' : storageRatio > 0.7 ? '#f59e0b' : '#22c55e';
   return (
