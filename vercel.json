@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
-  "buildCommand": "pnpm turbo run build --filter=@stemfer/web",
-  "outputDirectory": "apps/web/.next",
-  "installCommand": "pnpm install",
-  "devCommand": "pnpm turbo run dev --filter=@stemfer/web"
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@stemfer/web",
+  "outputDirectory": ".next",
+  "installCommand": "cd ../.. && pnpm install",
+  "devCommand": "next dev"
 }
