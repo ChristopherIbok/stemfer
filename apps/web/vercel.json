@@ -1,6 +1,0 @@
-{
-  "framework": "nextjs",
-  "installCommand": "pnpm install --frozen-lockfile --dir ../..",
-  "buildCommand": "pnpm --dir ../.. turbo run build --filter=@stemfer/web",
-  "outputDirectory": ".next"
-}

@@ -11,6 +11,9 @@
     "db:migrate": "wrangler d1 migrations apply stemfer-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply stemfer-db --local"
   },
+  "dependencies": {
+    "next": "^14.2.0"
+  },
   "devDependencies": {
     "turbo": "^2.0.0",
     "typescript": "^5.4.0",
