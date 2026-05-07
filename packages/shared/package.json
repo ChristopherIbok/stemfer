@@ -9,7 +9,7 @@
     "./utils/timecode": "./utils/timecode.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "echo 'shared package uses raw TS, no build needed'"
   },
   "devDependencies": {
     "typescript": "^5.4.0"
