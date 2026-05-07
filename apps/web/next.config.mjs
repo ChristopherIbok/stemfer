@@ -1,18 +1,6 @@
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ['@stemfer/shared'],
-  webpack(config) {
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      '@stemfer/shared': path.resolve(__dirname, '../../packages/shared'),
-    };
-    return config;
-  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.r2.cloudflarestorage.com' },
