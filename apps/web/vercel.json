@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@stemfer/web",
+  "installCommand": "pnpm install --frozen-lockfile --dir ../..",
+  "buildCommand": "pnpm --dir ../.. turbo run build --filter=@stemfer/web",
   "outputDirectory": ".next"
 }
