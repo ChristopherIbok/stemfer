@@ -1,0 +1,19 @@
+name = "stemfer-stem-engine"
+main = "src/index.ts"
+compatibility_date = "2024-05-24"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stemfer-db"
+database_id = "dd60059d-f3e5-4112-a15b-df2c754a10b7"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "stemfer-files"
+
+[[queues.consumers]]
+queue = "stemfer-stem-queue"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 2

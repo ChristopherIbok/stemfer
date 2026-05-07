@@ -1,0 +1,17 @@
+{
+  "name": "@stemfer/shared",
+  "version": "1.0.0",
+  "main": "./types/index.ts",
+  "types": "./types/index.ts",
+  "exports": {
+    ".": "./types/index.ts",
+    "./types": "./types/index.ts",
+    "./utils/timecode": "./utils/timecode.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@stemfer/api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "itty-router": "^5.0.17",
+    "jose": "^5.4.0",
+    "nanoid": "^5.0.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240524.0",
+    "typescript": "^5.4.0",
+    "wrangler": "^3.57.0"
+  }
+}

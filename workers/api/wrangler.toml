@@ -1,0 +1,36 @@
+name = "stemfer-api"
+main = "src/index.ts"
+compatibility_date = "2024-05-24"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+CORS_ORIGIN = "https://web-mu-ochre-87.vercel.app"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stemfer-db"
+database_id = "dd60059d-f3e5-4112-a15b-df2c754a10b7"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "stemfer-files"
+
+[[queues.producers]]
+binding = "PROCESSING_QUEUE"
+queue = "stemfer-processing"
+
+[[queues.consumers]]
+queue = "stemfer-processing"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+# [durable_objects]
+# bindings = [
+#   { name = "PRESENCE", class_name = "PresenceDO" }
+# ]
+
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["PresenceDO"]

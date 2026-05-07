@@ -1,0 +1,19 @@
+{
+  "name": "stemfer",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "deploy:workers": "turbo run deploy --filter=workers/*",
+    "deploy:web": "turbo run deploy --filter=apps/web",
+    "db:migrate": "wrangler d1 migrations apply stemfer-db --remote",
+    "db:migrate:local": "wrangler d1 migrations apply stemfer-db --local"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "wrangler": "^3.57.0"
+  }
+}

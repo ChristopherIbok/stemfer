@@ -1,0 +1,224 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0a0a;
+    --bg-surface: #111111;
+    --bg-elevated: #1a1a1a;
+    --border: #252525;
+    --text-primary: #ffffff;
+    --text-secondary: #a1a1aa;
+    --text-muted: #52525b;
+    --accent-green: #22c55e;
+    --accent-purple: #a855f7;
+
+    /* Motion tokens — keep all transitions consistent */
+    --duration-fast:   80ms;
+    --duration-base:   150ms;
+    --duration-slow:   220ms;
+    --ease-out:        cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out:     cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { @apply border-surface-300; }
+
+  body {
+    @apply bg-surface text-white antialiased;
+    font-family: var(--font-inter), system-ui, sans-serif;
+    /* Prevent layout shift during font load */
+    font-display: optional;
+  }
+
+  /* ── Shimmer skeleton ───────────────────────────────────────────────── */
+  @keyframes shimmer {
+    0%   { background-position: -400% 0; }
+    100% { background-position:  400% 0; }
+  }
+
+  /* Override default pulse so skeletons use shimmer directional sweep */
+  .animate-pulse {
+    background: linear-gradient(
+      90deg,
+      #1a1a1a 0%,
+      #252525 30%,
+      #2e2e2e 50%,
+      #252525 70%,
+      #1a1a1a 100%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.6s var(--ease-in-out) infinite;
+  }
+
+  /* ── Waveform playing indicator ─────────────────────────────────────── */
+  @keyframes waveformBar {
+    0%, 100% { transform: scaleY(0.35); }
+    50%       { transform: scaleY(1); }
+  }
+
+  /* ── Playhead pulse ─────────────────────────────────────────────────── */
+  @keyframes playheadPulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
+  }
+
+  /* ── Fade-in for loaded content ─────────────────────────────────────── */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fade-in {
+    animation: fadeIn var(--duration-slow) var(--ease-out) both;
+  }
+
+  /* ── Scrollbars ─────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar              { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track        { background: transparent; }
+  ::-webkit-scrollbar-thumb        { background: #2e2e2e; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover  { background: #22c55e55; }
+  ::-webkit-scrollbar-corner       { background: transparent; }
+
+  /* ── Selection ──────────────────────────────────────────────────────── */
+  ::selection { background: #22c55e33; color: #fff; }
+}
+
+@layer components {
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg
+           bg-brand-green-500 hover:bg-brand-green-600 active:bg-brand-green-700
+           text-black font-semibold text-sm
+           transition-colors
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    transition-duration: var(--duration-base);
+    /* GPU-friendly: only change color, not layout */
+    will-change: background-color;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg
+           bg-transparent
+           text-white/70 hover:text-white text-sm font-medium
+           border border-surface-300 hover:border-surface-400
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    transition: color var(--duration-base) var(--ease-out),
+                border-color var(--duration-base) var(--ease-out),
+                background-color var(--duration-base) var(--ease-out);
+  }
+
+  .btn-ghost:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg
+           bg-surface-300 hover:bg-surface-400
+           text-white text-sm font-medium
+           border border-surface-400
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    transition: background-color var(--duration-base) var(--ease-out);
+  }
+
+  /* ── Cards ──────────────────────────────────────────────────────────── */
+  .card {
+    @apply rounded-xl border border-surface-300 bg-surface-100 p-4;
+    transition: border-color var(--duration-base) var(--ease-out),
+                background-color var(--duration-base) var(--ease-out);
+  }
+
+  /* ── Inputs ─────────────────────────────────────────────────────────── */
+  .input {
+    @apply w-full rounded-lg border border-surface-300 bg-surface-200
+           px-3 py-2 text-sm text-white placeholder:text-zinc-600
+           focus:outline-none focus:ring-1 focus:ring-brand-green-500;
+    transition: border-color var(--duration-base) var(--ease-out),
+                box-shadow var(--duration-base) var(--ease-out);
+  }
+
+  .label {
+    @apply block text-xs font-medium text-zinc-400 mb-1.5;
+  }
+
+  /* ── Timeline ───────────────────────────────────────────────────────── */
+  .timeline-track {
+    @apply relative rounded border border-surface-300;
+    height: 72px;
+    transition: border-color var(--duration-base) var(--ease-out);
+  }
+
+  .timeline-clip {
+    @apply absolute rounded cursor-grab active:cursor-grabbing
+           bg-brand-green-500/20 border border-brand-green-500/60
+           overflow-hidden;
+    top:    4px;
+    bottom: 4px;
+    /* Only animate border — no layout-triggering props */
+    transition: border-color var(--duration-fast) var(--ease-out),
+                opacity       var(--duration-fast) var(--ease-out);
+    will-change: transform;
+  }
+
+  .timeline-clip:hover {
+    border-color: rgba(34, 197, 94, 0.9);
+  }
+
+  .timeline-clip--selected {
+    border-color: #ffffff !important;
+    box-shadow: 0 0 0 1px #ffffff22 inset;
+  }
+
+  .timeline-clip--muted {
+    opacity: 0.35;
+  }
+
+  /* ── Timecode ───────────────────────────────────────────────────────── */
+  .timecode {
+    @apply font-mono text-brand-green-400 tabular-nums;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Waveform bar (playing indicator) ──────────────────────────────── */
+  .waveform-bar {
+    display: inline-block;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--accent-green);
+    transform-origin: bottom;
+    animation: waveformBar 0.8s ease-in-out infinite;
+  }
+  .waveform-bar:nth-child(2) { animation-delay: 0.15s; }
+  .waveform-bar:nth-child(3) { animation-delay: 0.30s; }
+
+  /* ── Upload progress bar ────────────────────────────────────────────── */
+  .upload-bar {
+    @apply h-1 rounded-full bg-brand-green-400;
+    transition: width 0.3s var(--ease-out);
+    will-change: width;
+  }
+
+  /* ── Nav active indicator ───────────────────────────────────────────── */
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm;
+    transition: color var(--duration-base) var(--ease-out),
+                background-color var(--duration-base) var(--ease-out);
+    position: relative;
+  }
+
+  .nav-link--active {
+    @apply text-brand-green-400 font-medium;
+    background-color: rgba(34, 197, 94, 0.12);
+  }
+
+  .nav-link--inactive {
+    @apply text-zinc-400;
+  }
+
+  .nav-link--inactive:hover {
+    @apply text-white;
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+}
