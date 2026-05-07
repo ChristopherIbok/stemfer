@@ -54,6 +54,8 @@ export interface AudioFile {
   uploaded_by: string;
   uploader_name?: string;
 
+  folder_id?: string | null;
+
   // Storage
   r2_key: string;
   file_url: string;
@@ -118,6 +120,18 @@ export interface Subscription {
   team_seats: number;
   current_period_end?: string;
   cancel_at_period_end: boolean;
+}
+
+export interface Folder {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  name: string;
+  created_by: string;
+  child_count: number;
+  file_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ActivityLog {

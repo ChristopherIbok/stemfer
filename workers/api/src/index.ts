@@ -8,6 +8,7 @@ import { shareRoutes }        from './routes/share';
 import { adminRoutes }        from './routes/admin';
 import { presenceRoutes }     from './routes/presence';
 import { transferRoutes }     from './routes/transfer';
+import { folderRoutes }       from './routes/folders';
 import type { Env }           from './types/env';
 
 const { preflight, corsify } = cors({
@@ -41,6 +42,7 @@ router.all('/share/*',   shareRoutes.fetch);
 router.all('/admin/*',   adminRoutes.fetch);
 router.all('/presence/*',  presenceRoutes.fetch);
 router.all('/transfer/*', transferRoutes.fetch);
+router.all('/folders/*',  folderRoutes.fetch);
 
 export { PresenceDO } from './durable-objects/presence';
 

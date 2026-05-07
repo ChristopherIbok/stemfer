@@ -1,21 +1,11 @@
 import Link from 'next/link';
 import { ArrowRight, Zap, Cloud, GitBranch, Music2, Users } from 'lucide-react';
+import NavBar from '@/components/ui/NavBar';
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-surface">
-      {/* Nav */}
-      <nav className="fixed top-0 w-full z-50 border-b border-surface-300 bg-surface/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="text-xl font-bold text-brand-green-400 tracking-tight">Stemfer</span>
-          <div className="flex items-center gap-4">
-            <Link href="/transfer" className="text-sm text-zinc-400 hover:text-white transition-colors">Transfer</Link>
-            <Link href="/pricing" className="text-sm text-zinc-400 hover:text-white transition-colors">Pricing</Link>
-            <Link href="/auth/login" className="text-sm text-zinc-400 hover:text-white transition-colors">Sign in</Link>
-            <Link href="/auth/register" className="btn-primary">Get Started</Link>
-          </div>
-        </div>
-      </nav>
+      <NavBar />
 
       {/* Hero */}
       <section className="pt-40 pb-24 px-6 text-center">
@@ -24,14 +14,14 @@ export default function LandingPage() {
             <Zap size={12} />
             Now in public beta — built for producers
           </div>
-          <h1 className="text-6xl font-bold text-white leading-tight mb-6">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white leading-tight mb-6">
             The cloud studio<br />
             <span className="text-brand-green-400">built for audio.</span>
           </h1>
-          <p className="text-xl text-zinc-400 mb-10 max-w-2xl mx-auto">
+          <p className="text-base sm:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto">
             Transfer large audio files, manage DAW projects, synchronize stems with sample-accurate timecode, and collaborate in real time.
           </p>
-          <div className="flex items-center justify-center gap-4">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/auth/register" className="btn-primary text-base px-6 py-3">
               Start for free
               <ArrowRight size={18} />

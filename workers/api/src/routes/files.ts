@@ -20,12 +20,22 @@ fileRoutes.get('/', async (req, env) => {
   ).bind(projectId, payload.sub).first();
   if (!access) throw Object.assign(new Error('Access denied'), { status: 403 });
 
+  const folderId = url.searchParams.get('folderId');
+
   let query = `SELECT f.*, u.name as uploader_name FROM files f
                LEFT JOIN users u ON u.id = f.uploaded_by
                WHERE f.project_id = ? AND f.processing_status != 'deleted'`;
   const params: any[] = [projectId];
 
   if (sessionId) { query += ' AND f.session_id = ?'; params.push(sessionId); }
+
+  if (folderId === 'root') {
+    query += ' AND f.folder_id IS NULL';
+  } else if (folderId) {
+    query += ' AND f.folder_id = ?';
+    params.push(folderId);
+  }
+
   query += ' ORDER BY f.timeline_track ASC, f.offset_ms ASC';
 
   const files = await env.DB.prepare(query).bind(...params).all();
@@ -73,7 +83,7 @@ fileRoutes.patch('/:id', async (req, env) => {
 
   const allowed = [
     'start_timecode', 'offset_ms', 'timeline_track', 'is_locked',
-    'is_muted', 'group_id', 'bpm', 'time_signature', 'session_id',
+    'is_muted', 'group_id', 'bpm', 'time_signature', 'session_id', 'folder_id',
   ];
   const body    = await req.json<any>();
   const updates = Object.entries(body).filter(([k]) => allowed.includes(k));

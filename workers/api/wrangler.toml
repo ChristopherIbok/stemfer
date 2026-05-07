@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ENVIRONMENT = "production"
-CORS_ORIGIN = "https://web-mu-ochre-87.vercel.app"
+CORS_ORIGIN = "https://stemfer.com"
 
 [[d1_databases]]
 binding = "DB"

@@ -1,20 +1,39 @@
 'use client';
 import Link from 'next/link';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
 import type { Project } from '@stemfer/shared/types';
-import { Plus, FolderOpen, Music2, Clock, Search } from 'lucide-react';
+import { Plus, FolderOpen, Music2, Clock, Search, Trash2 } from 'lucide-react';
 import { SkeletonCard } from '@/components/ui/Skeleton';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { memo, useState, useMemo } from 'react';
 
 export default function ProjectsPage() {
   const qc = useQueryClient();
-  const [search, setSearch] = useState('');
+  const [search, setSearch]           = useState('');
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   const { data: projects = [], isLoading } = useQuery<Project[]>({
     queryKey: ['projects'],
     queryFn:  () => api.get('/projects'),
     staleTime: 60_000,
+  });
+
+  const deleteProject = useMutation({
+    mutationFn: (id: string) => api.delete(`/projects/${id}`),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['projects'] });
+      const prev = qc.getQueryData<Project[]>(['projects']);
+      qc.setQueryData<Project[]>(['projects'], old => old?.filter(p => p.id !== id) ?? []);
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['projects'], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      setDeletingProject(null);
+    },
   });
 
   const filtered = useMemo(() => {
@@ -27,13 +46,14 @@ export default function ProjectsPage() {
   }, [projects, search]);
 
   return (
-    <div className="p-8 space-y-6 animate-fade-in">
+    <div className="p-4 md:p-8 space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white tracking-tight">Projects</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">Projects</h1>
         <Link href="/projects/new" className="btn-primary">
           <Plus size={15} />
-          New Project
+          <span className="hidden sm:inline">New Project</span>
+          <span className="sm:hidden">New</span>
         </Link>
       </div>
 
@@ -60,10 +80,7 @@ export default function ProjectsPage() {
         <div className="card py-16 text-center border-dashed">
           <Search size={32} className="mx-auto mb-3 text-zinc-700" />
           <p className="text-zinc-400 font-medium text-sm">No results for &ldquo;{search}&rdquo;</p>
-          <button
-            onClick={() => setSearch('')}
-            className="text-xs text-brand-green-400 mt-2 hover:underline"
-          >
+          <button onClick={() => setSearch('')} className="text-xs text-brand-green-400 mt-2 hover:underline">
             Clear search
           </button>
         </div>
@@ -82,6 +99,7 @@ export default function ProjectsPage() {
             <ProjectCard
               key={p.id}
               project={p}
+              onDelete={p.member_role === 'owner' ? () => setDeletingProject(p) : undefined}
               onHover={() => qc.prefetchQuery({
                 queryKey: ['project', p.id],
                 queryFn:  () => api.get(`/projects/${p.id}`),
@@ -91,56 +109,72 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!deletingProject}
+        title={`Delete "${deletingProject?.name}"?`}
+        description="All files, sessions, and activity logs will be permanently deleted. This cannot be undone."
+        confirmLabel="Delete project"
+        danger
+        loading={deleteProject.isPending}
+        onConfirm={() => deletingProject && deleteProject.mutate(deletingProject.id)}
+        onCancel={() => setDeletingProject(null)}
+      />
     </div>
   );
 }
 
 const ProjectCard = memo(function ProjectCard({
-  project: p,
-  onHover,
+  project: p, onHover, onDelete,
 }: {
   project: Project;
   onHover?: () => void;
+  onDelete?: () => void;
 }) {
   return (
-    <Link
-      href={`/projects/${p.id}`}
-      className="card hover:border-brand-green-500/30 hover:bg-surface-200 group block"
-      onMouseEnter={onHover}
-    >
-      <div className="flex items-start gap-3 mb-3">
-        <div
-          className="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center"
-          style={{
-            backgroundColor: `${p.color}1a`,
-            border: `1px solid ${p.color}44`,
-          }}
+    <div className="card hover:border-brand-green-500/30 hover:bg-surface-200 group relative transition-colors">
+      <Link href={`/projects/${p.id}`} className="block" onMouseEnter={onHover}>
+        <div className="flex items-start gap-3 mb-3">
+          <div
+            className="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center"
+            style={{ backgroundColor: `${p.color}1a`, border: `1px solid ${p.color}44` }}
+          >
+            <FolderOpen size={16} style={{ color: p.color }} />
+          </div>
+          <div className="flex-1 min-w-0 pr-6">
+            <h3 className="font-semibold text-white truncate group-hover:text-brand-green-400 text-sm transition-colors">
+              {p.name}
+            </h3>
+            <p className="text-xs text-zinc-500 capitalize mt-0.5">{p.member_role}</p>
+          </div>
+        </div>
+
+        {p.description && (
+          <p className="text-xs text-zinc-500 mb-3 line-clamp-2 leading-relaxed">{p.description}</p>
+        )}
+
+        <div className="flex items-center justify-between text-[11px] text-zinc-600 mt-auto">
+          <span className="flex items-center gap-1">
+            <Music2 size={10} />
+            {p.file_count} {p.file_count === 1 ? 'file' : 'files'}
+          </span>
+          <span className="flex items-center gap-1">
+            <Clock size={10} />
+            {new Date(p.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+          </span>
+        </div>
+      </Link>
+
+      {/* Delete button — only visible on hover for owners */}
+      {onDelete && (
+        <button
+          onClick={e => { e.preventDefault(); onDelete(); }}
+          className="absolute top-3 right-3 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+          title="Delete project"
         >
-          <FolderOpen size={16} style={{ color: p.color }} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-white truncate group-hover:text-brand-green-400 text-sm"
-              style={{ transition: 'color var(--duration-base) var(--ease-out)' }}>
-            {p.name}
-          </h3>
-          <p className="text-xs text-zinc-500 capitalize mt-0.5">{p.member_role}</p>
-        </div>
-      </div>
-
-      {p.description && (
-        <p className="text-xs text-zinc-500 mb-3 line-clamp-2 leading-relaxed">{p.description}</p>
+          <Trash2 size={13} />
+        </button>
       )}
-
-      <div className="flex items-center justify-between text-[11px] text-zinc-600 mt-auto">
-        <span className="flex items-center gap-1">
-          <Music2 size={10} />
-          {p.file_count} {p.file_count === 1 ? 'file' : 'files'}
-        </span>
-        <span className="flex items-center gap-1">
-          <Clock size={10} />
-          {new Date(p.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-        </span>
-      </div>
-    </Link>
+    </div>
   );
 });
