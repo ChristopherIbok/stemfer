@@ -67,9 +67,9 @@ export default function LandingPage() {
           <p className="text-zinc-400 mb-12">Start free. Upgrade when you need more.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { name: 'Free',   price: '$0',   storage: '5 GB',   uploads: '500 MB', projects: 3 },
-              { name: 'Pro',    price: '$19',  storage: '100 GB', uploads: '5 GB',   projects: 50, popular: true },
-              { name: 'Studio', price: '$79',  storage: '500 GB', uploads: '25 GB',  projects: '∞' },
+              { name: 'Free',   price: '$0',  storage: '5 GB',   projects: 3 },
+              { name: 'Pro',    price: '$19', storage: '100 GB', projects: 50, popular: true },
+              { name: 'Studio', price: '$79', storage: '500 GB', projects: '∞' },
             ].map(plan => (
               <div key={plan.name} className={`card relative flex flex-col ${plan.popular ? 'border-brand-green-500' : ''}`}>
                 {plan.popular && (
@@ -83,7 +83,7 @@ export default function LandingPage() {
                 </div>
                 <ul className="text-sm text-zinc-400 space-y-2 flex-1 mb-6">
                   <li>{plan.storage} storage</li>
-                  <li>{plan.uploads} max file</li>
+                  <li>Unlimited file size</li>
                   <li>{plan.projects} projects</li>
                 </ul>
                 <Link

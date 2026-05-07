@@ -15,14 +15,7 @@ uploadRoutes.post('/init', async (req, env) => {
   if (!filename || !size || !projectId)
     throw Object.assign(new Error('Missing required fields'), { status: 400 });
 
-  // Validate upload size against subscription
-  const sub = await env.DB.prepare(
-    'SELECT upload_limit_bytes, storage_limit_bytes FROM subscriptions WHERE user_id = ?'
-  ).bind(payload.sub).first<{ upload_limit_bytes: number; storage_limit_bytes: number }>();
-
-  if (sub && size > sub.upload_limit_bytes)
-    throw Object.assign(new Error(`File exceeds upload limit of ${formatBytes(sub.upload_limit_bytes)}`), { status: 413 });
-
+  // Only check total storage quota — no per-file size limit
   const hasRoom = await checkStorageLimit(env, payload.sub, size);
   if (!hasRoom)
     throw Object.assign(new Error('Storage limit exceeded'), { status: 413 });
@@ -153,8 +146,3 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 }
 
-function formatBytes(bytes: number): string {
-  const gb = bytes / 1073741824;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(bytes / 1048576).toFixed(0)} MB`;
-}
