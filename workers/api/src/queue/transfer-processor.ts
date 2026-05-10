@@ -13,10 +13,10 @@ interface TransferJob {
 /**
  * Handles transfer_send queue jobs:
  * 1. Fetch all uploaded file keys for the transfer
- * 2. Build a ZIP in-memory (streaming)
+ * 2. Build a ZIP in-memory
  * 3. Upload ZIP to R2
- * 4. Update DB: status=ready, zip_r2_key, zip_size_bytes
- * 5. Send emails via Resend API
+ * 4. Update DB: status=ready
+ * 5. Send emails via Resend (noreply@stemfer.com)
  */
 export async function handleTransferJob(job: TransferJob, env: Env): Promise<void> {
   const {
@@ -27,19 +27,20 @@ export async function handleTransferJob(job: TransferJob, env: Env): Promise<voi
   try {
     /* 1. Collect files */
     const files = await env.DB.prepare(
-      `SELECT original_name, r2_key, size_bytes FROM transfer_files WHERE transfer_id = ? AND status = 'uploaded'`
+      `SELECT original_name, r2_key, size_bytes FROM transfer_files
+       WHERE transfer_id = ? AND status = 'uploaded'`
     ).bind(transferId).all<{ original_name: string; r2_key: string; size_bytes: number }>();
 
     if (!files.results.length) {
-      await markFailed(env, transferId, 'No files found');
+      await markFailed(env, transferId, 'No uploaded files found');
       return;
     }
 
-    /* 2. Build ZIP in memory using a minimal ZIP writer */
-    const zipBytes = await buildZip(files.results.map(f => ({
-      name: f.original_name,
-      r2Key: f.r2_key,
-    })), env);
+    /* 2. Build ZIP */
+    const zipBytes = await buildZip(
+      files.results.map(f => ({ name: f.original_name, r2Key: f.r2_key })),
+      env
+    );
 
     /* 3. Upload ZIP to R2 */
     const zipKey = `transfers/${transferId}/transfer.zip`;
@@ -48,35 +49,52 @@ export async function handleTransferJob(job: TransferJob, env: Env): Promise<voi
       customMetadata: { transferId },
     });
 
-    /* 4. Mark ready in DB */
+    /* 4. Mark ready */
     await env.DB.prepare(
       `UPDATE transfers
        SET status = 'ready', zip_r2_key = ?, zip_size_bytes = ?, updated_at = datetime('now')
        WHERE id = ?`
     ).bind(zipKey, zipBytes.byteLength, transferId).run();
 
-    /* 5. Send emails */
-    const downloadUrl  = `${env.CORS_ORIGIN}/transfer/download/${downloadToken}`;
-    const expiryDate   = new Date(expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-    const zipSizeMB    = (zipBytes.byteLength / 1e6).toFixed(1);
-    const fileCount    = files.results.length;
-    const fileWord     = fileCount === 1 ? 'file' : 'files';
+    /* 5. Send both emails — each throws on failure so the queue message retries */
+    const downloadUrl = `${env.CORS_ORIGIN}/transfer/download/${downloadToken}`;
+    const expiryDate  = new Date(expiresAt).toLocaleDateString('en-US', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    const zipSizeMB = (zipBytes.byteLength / 1_000_000).toFixed(1);
+    const fileCount = files.results.length;
+    const fileWord  = fileCount === 1 ? 'file' : 'files';
 
-    await Promise.allSettled([
+    /* Send to recipient first (most important), then sender confirmation */
+    const emailResults = await Promise.allSettled([
       sendEmail(env, {
         to:      recipientEmail,
-        subject: 'You\'ve received files via Stemfer',
+        subject: `${senderEmail} sent you ${fileCount} ${fileWord} via Stemfer`,
         html:    recipientHtml({ downloadUrl, expiryDate, zipSizeMB, fileCount, fileWord, senderEmail, message }),
       }),
       sendEmail(env, {
         to:      senderEmail,
-        subject: 'Your transfer has been sent — Stemfer',
+        subject: `Your Stemfer transfer to ${recipientEmail} was sent`,
         html:    senderHtml({ downloadUrl, expiryDate, zipSizeMB, fileCount, fileWord, recipientEmail }),
       }),
     ]);
 
-  } catch (err: any) {
-    await markFailed(env, transferId, err?.message ?? 'Unknown error');
+    /* Log any email failures without failing the whole job */
+    for (const result of emailResults) {
+      if (result.status === 'rejected') {
+        console.error('[transfer-processor] email send failed:', result.reason);
+        /* Store the warning but don't fail the transfer — files are ready */
+        await env.DB.prepare(
+          `UPDATE transfers SET error = ? WHERE id = ?`
+        ).bind(`Email delivery warning: ${result.reason}`, transferId).run().catch(() => {});
+      }
+    }
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[transfer-processor] job failed:', msg);
+    await markFailed(env, transferId, msg);
+    throw err; /* re-throw so the queue retries */
   }
 }
 
@@ -86,17 +104,396 @@ async function markFailed(env: Env, transferId: string, reason: string) {
   ).bind(reason, transferId).run().catch(() => {});
 }
 
-/* ── Minimal ZIP builder ─────────────────────────────────────────────────
-   Streams each file from R2, writes local file header + data, then
-   constructs the central directory at the end.  Supports files up to
-   ~4 GB per file (uses ZIP64 data descriptors for size fields > 0xFFFF).
-   This avoids shipping a heavy npm zip library into the Worker bundle.
+/* ── Email via Gmail API (OAuth2) ─────────────────────────────────────────
+   Flow:
+     1. POST to Google's token endpoint with the refresh token to get a
+        short-lived access token (valid 1 hour).
+     2. POST to Gmail API /users/me/messages/send with a base64url-encoded
+        RFC-2822 message.
+   Required secrets (wrangler secret put):
+     GMAIL_CLIENT_ID      — OAuth2 client ID from Google Cloud Console
+     GMAIL_CLIENT_SECRET  — OAuth2 client secret
+     GMAIL_REFRESH_TOKEN  — offline refresh token (see setup guide below)
+     GMAIL_SENDER         — display string, e.g. "Stemfer <you@gmail.com>"
+─────────────────────────────────────────────────────────────────────── */
+
+/** Exchange the stored refresh token for a fresh access token. */
+async function getGmailAccessToken(env: Env): Promise<string> {
+  if (!env.GMAIL_CLIENT_ID || !env.GMAIL_CLIENT_SECRET || !env.GMAIL_REFRESH_TOKEN) {
+    throw new Error('Gmail OAuth credentials are not configured (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN)');
+  }
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     env.GMAIL_CLIENT_ID,
+      client_secret: env.GMAIL_CLIENT_SECRET,
+      refresh_token: env.GMAIL_REFRESH_TOKEN,
+      grant_type:    'refresh_token',
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Gmail token refresh failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json<{ access_token: string; error?: string }>();
+  if (data.error || !data.access_token) {
+    throw new Error(`Gmail token error: ${data.error ?? 'no access_token returned'}`);
+  }
+
+  return data.access_token;
+}
+
+/** Encode a string to base64url (URL-safe base64, no padding). */
+function toBase64Url(str: string): string {
+  const b64 = btoa(unescape(encodeURIComponent(str)));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Build an RFC-2822 email message string.
+ * Gmail API requires MIME encoded as base64url.
+ */
+function buildMimeMessage(opts: {
+  from:    string;
+  to:      string;
+  subject: string;
+  html:    string;
+}): string {
+  const boundary = `boundary_${Date.now()}`;
+  const lines = [
+    `From: ${opts.from}`,
+    `To: ${opts.to}`,
+    `Subject: ${opts.subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    `Content-Transfer-Encoding: 7bit`,
+    ``,
+    /* Plain-text fallback — strip HTML tags for a minimal readable version */
+    opts.html.replace(/<[^>]+>/g, '').replace(/\s{2,}/g, ' ').trim(),
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset="UTF-8"`,
+    `Content-Transfer-Encoding: 7bit`,
+    ``,
+    opts.html,
+    ``,
+    `--${boundary}--`,
+  ];
+  return lines.join('\r\n');
+}
+
+/** Send one email via the Gmail API. Throws on any failure. */
+async function sendEmail(
+  env: Env,
+  opts: { to: string; subject: string; html: string },
+): Promise<void> {
+  const sender      = env.GMAIL_SENDER || 'Stemfer <noreply@stemfer.com>';
+  const accessToken = await getGmailAccessToken(env);
+
+  const raw = toBase64Url(buildMimeMessage({
+    from:    sender,
+    to:      opts.to,
+    subject: opts.subject,
+    html:    opts.html,
+  }));
+
+  const res = await fetch(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({ raw }),
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '(no body)');
+    throw new Error(`Gmail API ${res.status}: ${body}`);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Email HTML templates
+   Rules: table-based layout, inline styles only, no flexbox/grid (Gmail
+   strips <style> blocks and doesn't support modern CSS layout).
+─────────────────────────────────────────────────────────────────────── */
+
+function recipientHtml(p: {
+  downloadUrl: string;
+  expiryDate:  string;
+  zipSizeMB:   string;
+  fileCount:   number;
+  fileWord:    string;
+  senderEmail: string;
+  message:     string;
+}): string {
+  const msgBlock = p.message
+    ? `<tr>
+        <td style="padding:0 0 24px 0;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                 style="background:#161616;border-radius:8px;border:1px solid #2a2a2a;">
+            <tr>
+              <td style="padding:16px 20px;font-size:14px;color:#a1a1aa;font-style:italic;line-height:1.6;">
+                &ldquo;${escHtml(p.message)}&rdquo;
+              </td>
+            </tr>
+          </table>
+        </td>
+       </tr>`
+    : '';
+
+  return baseLayout(`
+    <!-- Header -->
+    <tr>
+      <td style="padding:0 0 24px 0;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0 0 6px 0;font-size:11px;font-weight:700;letter-spacing:2px;color:#22c55e;text-transform:uppercase;">Stemfer</p>
+        <h1 style="margin:0 0 6px 0;font-size:24px;font-weight:700;color:#ffffff;line-height:1.2;">
+          You&rsquo;ve received ${p.fileCount} ${p.fileWord}
+        </h1>
+        <p style="margin:0;font-size:14px;color:#71717a;">From ${escHtml(p.senderEmail)}</p>
+      </td>
+    </tr>
+
+    <!-- Spacer -->
+    <tr><td style="height:24px;"></td></tr>
+
+    <!-- Message block (conditional) -->
+    ${msgBlock}
+
+    <!-- File info pill -->
+    <tr>
+      <td style="padding:0 0 24px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+               style="background:#111;border-radius:8px;border:1px solid #252525;">
+          <tr>
+            <td style="padding:14px 20px;">
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="padding-right:24px;text-align:center;">
+                    <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">${p.fileCount}</p>
+                    <p style="margin:4px 0 0 0;font-size:11px;color:#52525b;text-transform:uppercase;letter-spacing:1px;">${p.fileWord}</p>
+                  </td>
+                  <td style="width:1px;background:#252525;"></td>
+                  <td style="padding-left:24px;text-align:center;">
+                    <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">${p.zipSizeMB}</p>
+                    <p style="margin:4px 0 0 0;font-size:11px;color:#52525b;text-transform:uppercase;letter-spacing:1px;">MB</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- CTA button -->
+    <tr>
+      <td style="padding:0 0 20px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td align="center">
+              <a href="${p.downloadUrl}"
+                 style="display:inline-block;background:#22c55e;color:#000000;text-decoration:none;
+                        font-size:15px;font-weight:700;padding:14px 32px;border-radius:10px;
+                        letter-spacing:0.2px;">
+                Download Files
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Expiry note -->
+    <tr>
+      <td style="padding:0 0 8px 0;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#52525b;">
+          Link expires ${p.expiryDate} &middot; Max 50 downloads
+        </p>
+      </td>
+    </tr>
+  `);
+}
+
+function senderHtml(p: {
+  downloadUrl:    string;
+  expiryDate:     string;
+  zipSizeMB:      string;
+  fileCount:      number;
+  fileWord:       string;
+  recipientEmail: string;
+}): string {
+  return baseLayout(`
+    <!-- Header -->
+    <tr>
+      <td style="padding:0 0 24px 0;border-bottom:1px solid #1f1f1f;">
+        <p style="margin:0 0 6px 0;font-size:11px;font-weight:700;letter-spacing:2px;color:#22c55e;text-transform:uppercase;">Stemfer</p>
+        <h1 style="margin:0 0 6px 0;font-size:24px;font-weight:700;color:#ffffff;line-height:1.2;">
+          Transfer sent
+        </h1>
+        <p style="margin:0;font-size:14px;color:#71717a;">To: ${escHtml(p.recipientEmail)}</p>
+      </td>
+    </tr>
+
+    <!-- Spacer -->
+    <tr><td style="height:24px;"></td></tr>
+
+    <!-- Summary row -->
+    <tr>
+      <td style="padding:0 0 24px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+               style="background:#111;border-radius:8px;border:1px solid #252525;">
+          <tr>
+            <td style="padding:14px 20px;">
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="padding-right:24px;">
+                    <p style="margin:0;font-size:12px;color:#71717a;">Files</p>
+                    <p style="margin:4px 0 0 0;font-size:16px;font-weight:700;color:#fff;">${p.fileCount} ${p.fileWord}</p>
+                  </td>
+                  <td style="padding-right:24px;">
+                    <p style="margin:0;font-size:12px;color:#71717a;">Size</p>
+                    <p style="margin:4px 0 0 0;font-size:16px;font-weight:700;color:#fff;">${p.zipSizeMB} MB</p>
+                  </td>
+                  <td>
+                    <p style="margin:0;font-size:12px;color:#71717a;">Expires</p>
+                    <p style="margin:4px 0 0 0;font-size:16px;font-weight:700;color:#fff;">${p.expiryDate}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Download link box -->
+    <tr>
+      <td style="padding:0 0 24px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+               style="border-radius:8px;border:1px solid #252525;">
+          <tr>
+            <td style="padding:10px 16px;">
+              <p style="margin:0 0 4px 0;font-size:10px;color:#52525b;text-transform:uppercase;letter-spacing:1px;">Download link</p>
+              <p style="margin:0;font-size:12px;color:#22c55e;word-break:break-all;font-family:monospace;">
+                <a href="${p.downloadUrl}" style="color:#22c55e;text-decoration:none;">${p.downloadUrl}</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Copy link button -->
+    <tr>
+      <td style="padding:0 0 20px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td align="center">
+              <a href="${p.downloadUrl}"
+                 style="display:inline-block;background:#1a1a1a;border:1px solid #252525;
+                        color:#22c55e;text-decoration:none;font-size:14px;font-weight:600;
+                        padding:12px 28px;border-radius:10px;">
+                View Transfer
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Footer note -->
+    <tr>
+      <td style="text-align:center;">
+        <p style="margin:0;font-size:12px;color:#52525b;">
+          Keep this email as a record of your transfer.
+        </p>
+      </td>
+    </tr>
+  `);
+}
+
+/* ── Shared base layout ───────────────────────────────────────────────────
+   Outer dark wrapper → centred 540px card → content rows injected above.
+   Table-based, 100% inline styles — renders in Gmail, Outlook, Apple Mail.
+─────────────────────────────────────────────────────────────────────── */
+function baseLayout(rows: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+  <title>Stemfer</title>
+</head>
+<body style="margin:0;padding:0;background-color:#0a0a0a;-webkit-text-size-adjust:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+
+  <!-- Outer wrapper -->
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0a0a0a;padding:40px 16px;">
+    <tr>
+      <td align="center">
+
+        <!-- Card -->
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+               style="max-width:540px;background:#111111;border-radius:16px;
+                      border:1px solid #252525;overflow:hidden;">
+          <tr>
+            <td style="padding:32px 32px 28px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                ${rows}
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card footer -->
+          <tr>
+            <td style="padding:16px 32px;background:#0d0d0d;border-top:1px solid #1a1a1a;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#3f3f46;">
+                Stemfer &middot; Cloud studio for audio professionals &middot;
+                <a href="https://stemfer.com" style="color:#52525b;text-decoration:none;">stemfer.com</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`;
+}
+
+/* Minimal HTML escaping — prevents XSS in email content */
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/* ── ZIP builder ──────────────────────────────────────────────────────────
+   Minimal streaming ZIP writer — no npm dependencies.
+   Supports files up to 4 GB. Stores without compression (method 0).
 ─────────────────────────────────────────────────────────────────────── */
 async function buildZip(
   entries: { name: string; r2Key: string }[],
-  env: Env
+  env: Env,
 ): Promise<ArrayBuffer> {
-  const parts: Uint8Array[] = [];
+  const parts:      Uint8Array[] = [];
   const centralDir: Uint8Array[] = [];
   let offset = 0;
 
@@ -104,11 +501,11 @@ async function buildZip(
     const obj = await env.FILES.get(entry.r2Key);
     if (!obj) continue;
 
-    const data      = new Uint8Array(await obj.arrayBuffer());
-    const name      = new TextEncoder().encode(entry.name);
-    const crc       = crc32(data);
+    const data        = new Uint8Array(await obj.arrayBuffer());
+    const name        = new TextEncoder().encode(entry.name);
+    const crc         = crc32(data);
     const localHeader = makeLocalHeader(name, data.byteLength, crc);
-    const cdEntry    = makeCentralDirEntry(name, data.byteLength, crc, offset);
+    const cdEntry     = makeCentralDirEntry(name, data.byteLength, crc, offset);
 
     parts.push(localHeader, data);
     centralDir.push(cdEntry);
@@ -119,9 +516,9 @@ async function buildZip(
   const cdSize   = centralDir.reduce((s, b) => s + b.byteLength, 0);
   const eocd     = makeEOCD(centralDir.length, cdSize, cdOffset);
 
-  const all      = [...parts, ...centralDir, eocd];
-  const total    = all.reduce((s, b) => s + b.byteLength, 0);
-  const out      = new Uint8Array(total);
+  const all   = [...parts, ...centralDir, eocd];
+  const total = all.reduce((s, b) => s + b.byteLength, 0);
+  const out   = new Uint8Array(total);
   let pos = 0;
   for (const b of all) { out.set(b, pos); pos += b.byteLength; }
 
@@ -132,17 +529,17 @@ function makeLocalHeader(name: Uint8Array, size: number, crc: number): Uint8Arra
   const buf = new ArrayBuffer(30 + name.byteLength);
   const dv  = new DataView(buf);
   const u8  = new Uint8Array(buf);
-  dv.setUint32(0,  0x04034b50, true); // signature
-  dv.setUint16(4,  20,         true); // version
-  dv.setUint16(6,  0,          true); // flags
-  dv.setUint16(8,  0,          true); // no compression
-  dv.setUint16(10, 0,          true); // mod time
-  dv.setUint16(12, 0,          true); // mod date
+  dv.setUint32(0,  0x04034b50, true);
+  dv.setUint16(4,  20,         true);
+  dv.setUint16(6,  0,          true);
+  dv.setUint16(8,  0,          true);
+  dv.setUint16(10, 0,          true);
+  dv.setUint16(12, 0,          true);
   dv.setUint32(14, crc,        true);
-  dv.setUint32(18, size,       true); // compressed size
-  dv.setUint32(22, size,       true); // uncompressed size
+  dv.setUint32(18, size,       true);
+  dv.setUint32(22, size,       true);
   dv.setUint16(26, name.byteLength, true);
-  dv.setUint16(28, 0, true);          // extra length
+  dv.setUint16(28, 0,          true);
   u8.set(name, 30);
   return u8;
 }
@@ -152,21 +549,21 @@ function makeCentralDirEntry(name: Uint8Array, size: number, crc: number, localO
   const dv  = new DataView(buf);
   const u8  = new Uint8Array(buf);
   dv.setUint32(0,  0x02014b50, true);
-  dv.setUint16(4,  20,         true); // version made by
-  dv.setUint16(6,  20,         true); // version needed
-  dv.setUint16(8,  0,          true); // flags
-  dv.setUint16(10, 0,          true); // no compression
+  dv.setUint16(4,  20,         true);
+  dv.setUint16(6,  20,         true);
+  dv.setUint16(8,  0,          true);
+  dv.setUint16(10, 0,          true);
   dv.setUint16(12, 0,          true);
   dv.setUint16(14, 0,          true);
   dv.setUint32(16, crc,        true);
   dv.setUint32(20, size,       true);
   dv.setUint32(24, size,       true);
   dv.setUint16(28, name.byteLength, true);
-  dv.setUint16(30, 0,          true); // extra
-  dv.setUint16(32, 0,          true); // comment
-  dv.setUint16(34, 0,          true); // disk start
-  dv.setUint16(36, 0,          true); // int attr
-  dv.setUint32(38, 0,          true); // ext attr
+  dv.setUint16(30, 0,          true);
+  dv.setUint16(32, 0,          true);
+  dv.setUint16(34, 0,          true);
+  dv.setUint16(36, 0,          true);
+  dv.setUint32(38, 0,          true);
   dv.setUint32(42, localOffset, true);
   u8.set(name, 46);
   return u8;
@@ -188,9 +585,9 @@ function makeEOCD(count: number, cdSize: number, cdOffset: number): Uint8Array {
 
 function crc32(data: Uint8Array): number {
   let crc = 0xFFFFFFFF;
-  const table = getCRCTable();
+  const t = getCRCTable();
   for (let i = 0; i < data.length; i++) {
-    crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xFF];
+    crc = (crc >>> 8) ^ t[(crc ^ data[i]) & 0xFF];
   }
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
@@ -201,78 +598,8 @@ function getCRCTable(): Uint32Array {
   _crcTable = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
     let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
     _crcTable[n] = c;
   }
   return _crcTable;
-}
-
-/* ── Email via Resend ────────────────────────────────────────────────────── */
-async function sendEmail(env: Env, opts: { to: string; subject: string; html: string }) {
-  const res = await fetch('https://api.resend.com/emails', {
-    method:  'POST',
-    headers: {
-      Authorization:  `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from:    'Stemfer <onboarding@resend.dev>',
-      to:      [opts.to],
-      subject: opts.subject,
-      html:    opts.html,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    console.error('Resend error:', res.status, body);
-  }
-}
-
-function recipientHtml(p: {
-  downloadUrl: string;
-  expiryDate: string;
-  zipSizeMB: string;
-  fileCount: number;
-  fileWord: string;
-  senderEmail: string;
-  message: string;
-}) {
-  return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;padding:40px 0;margin:0">
-<div style="max-width:520px;margin:0 auto;background:#111;border:1px solid #252525;border-radius:16px;overflow:hidden">
-  <div style="background:#111;padding:32px 32px 24px;border-bottom:1px solid #1f1f1f">
-    <p style="color:#22c55e;font-size:18px;font-weight:700;margin:0 0 4px">Stemfer</p>
-    <h1 style="font-size:22px;margin:0 0 8px;color:#fff">You've received ${p.fileCount} ${p.fileWord}</h1>
-    <p style="color:#71717a;font-size:14px;margin:0">Sent by ${p.senderEmail}</p>
-  </div>
-  ${p.message ? `<div style="padding:20px 32px;background:#141414;border-bottom:1px solid #1f1f1f"><p style="color:#a1a1aa;font-size:14px;margin:0;font-style:italic">"${p.message}"</p></div>` : ''}
-  <div style="padding:32px">
-    <a href="${p.downloadUrl}" style="display:block;text-align:center;background:#22c55e;color:#000;text-decoration:none;font-weight:600;font-size:15px;padding:14px 24px;border-radius:10px;margin-bottom:24px">Download Files (${p.zipSizeMB} MB)</a>
-    <p style="color:#52525b;font-size:12px;text-align:center;margin:0">Link expires ${p.expiryDate} · Max ${50} downloads</p>
-  </div>
-</div>
-</body></html>`;
-}
-
-function senderHtml(p: {
-  downloadUrl: string;
-  expiryDate: string;
-  zipSizeMB: string;
-  fileCount: number;
-  fileWord: string;
-  recipientEmail: string;
-}) {
-  return `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;padding:40px 0;margin:0">
-<div style="max-width:520px;margin:0 auto;background:#111;border:1px solid #252525;border-radius:16px;overflow:hidden">
-  <div style="padding:32px 32px 24px;border-bottom:1px solid #1f1f1f">
-    <p style="color:#22c55e;font-size:18px;font-weight:700;margin:0 0 4px">Stemfer</p>
-    <h1 style="font-size:22px;margin:0 0 8px;color:#fff">Your transfer was sent</h1>
-    <p style="color:#71717a;font-size:14px;margin:0">To: ${p.recipientEmail}</p>
-  </div>
-  <div style="padding:32px">
-    <p style="color:#a1a1aa;font-size:14px;margin:0 0 20px">${p.fileCount} ${p.fileWord} (${p.zipSizeMB} MB) · Expires ${p.expiryDate}</p>
-    <a href="${p.downloadUrl}" style="display:block;text-align:center;background:#1a1a1a;border:1px solid #252525;color:#22c55e;text-decoration:none;font-weight:600;font-size:14px;padding:12px 24px;border-radius:10px;margin-bottom:24px">Copy Download Link</a>
-    <p style="color:#52525b;font-size:12px;text-align:center;margin:0">Keep this email as a record of your transfer.</p>
-  </div>
-</div>
-</body></html>`;
 }

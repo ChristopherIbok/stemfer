@@ -1,12 +1,13 @@
 'use client';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
+import { useUploadStore } from '@/store/useUploadStore';
 import type { Folder, AudioFile } from '@stemfer/shared/types';
 import {
   FolderOpen, FolderPlus, ChevronRight, Home,
   Trash2, Music2, GitBranch, File, Download,
-  MoreHorizontal, FolderInput, Check, X,
+  MoreHorizontal, FolderInput, Check, X, Upload,
 } from 'lucide-react';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { formatDuration } from '@stemfer/shared/utils/timecode';
@@ -35,6 +36,9 @@ export function FolderBrowser({ projectId, memberRole }: Props) {
   const [deleteFolder, setDeleteFolder]   = useState<Folder | null>(null);
   const [deleteFile, setDeleteFile]       = useState<AudioFile | null>(null);
   const [movingFileId, setMovingFileId]   = useState<string | null>(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | 'root' | null>(null);
+
+  const startUpload = useUploadStore(s => s.startUpload);
 
   // Queries
   const { data: folders = [], isLoading: loadingFolders } = useQuery<Folder[]>({
@@ -104,11 +108,47 @@ export function FolderBrowser({ projectId, memberRole }: Props) {
     createFolder.mutate(name);
   }, [newFolderName, createFolder]);
 
+  const handleFolderDrop = useCallback(async (
+    e: React.DragEvent<HTMLDivElement>,
+    targetFolderId: string | null,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolderId(null);
+    if (!canEdit) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    for (const file of files) {
+      try {
+        await startUpload(file, projectId, undefined, targetFolderId);
+      } catch { /* errors visible in upload store */ }
+    }
+    qc.invalidateQueries({ queryKey: ['files', projectId, 'folder', targetFolderId ?? 'root'] });
+    qc.invalidateQueries({ queryKey: ['files', projectId] });
+  }, [canEdit, startUpload, projectId, qc]);
+
   const isLoading = loadingFolders || loadingFiles;
   const isEmpty = !isLoading && folders.length === 0 && files.length === 0;
 
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4"
+      onDragOver={e => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        /* Only handle drops on the root container if no child target is active */
+        if (dragOverFolderId !== null) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        setDragOverFolderId('root');
+      }}
+      onDragLeave={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node))
+          setDragOverFolderId(null);
+      }}
+      onDrop={e => {
+        if (dragOverFolderId === 'root') handleFolderDrop(e, folderId);
+      }}
+    >
       {/* Breadcrumb nav */}
       <div className="flex items-center gap-1 flex-wrap">
         {breadcrumbs.map((crumb, i) => (
@@ -200,11 +240,30 @@ export function FolderBrowser({ projectId, memberRole }: Props) {
         <div
           key={folder.id}
           className="grid gap-4 items-center px-4 py-2.5 rounded-lg hover:bg-surface-200 group cursor-pointer"
-          style={{ gridTemplateColumns: 'auto 1fr auto auto' }}
+          style={{
+            gridTemplateColumns: 'auto 1fr auto auto',
+            outline: dragOverFolderId === folder.id ? '1px solid rgba(74,222,128,0.5)' : undefined,
+            backgroundColor: dragOverFolderId === folder.id ? 'rgba(74,222,128,0.06)' : undefined,
+            transition: 'background-color 80ms',
+          }}
           onClick={() => navigateInto(folder)}
+          onDragOver={e => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy';
+            setDragOverFolderId(folder.id);
+          }}
+          onDragLeave={e => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node))
+              setDragOverFolderId(null);
+          }}
+          onDrop={e => handleFolderDrop(e, folder.id)}
         >
-          <div className="p-1.5 rounded bg-brand-green-500/10 flex-shrink-0">
-            <FolderOpen size={14} className="text-brand-green-400" />
+          <div className={`p-1.5 rounded flex-shrink-0 ${dragOverFolderId === folder.id ? 'bg-brand-green-500/25' : 'bg-brand-green-500/10'}`}>
+            {dragOverFolderId === folder.id
+              ? <Upload size={14} className="text-brand-green-400" />
+              : <FolderOpen size={14} className="text-brand-green-400" />}
           </div>
           <span className="text-sm text-white font-medium truncate">{folder.name}</span>
           <span className="text-xs text-zinc-500">
@@ -244,10 +303,32 @@ export function FolderBrowser({ projectId, memberRole }: Props) {
       ))}
 
       {isEmpty && (
-        <div className="text-center py-12 text-zinc-600">
-          <FolderOpen size={32} className="mx-auto mb-3 text-zinc-700" />
-          <p className="text-sm text-zinc-500">This folder is empty</p>
-          {canEdit && (
+        <div
+          className="text-center py-12 rounded-xl border-2 border-dashed"
+          style={{
+            borderColor: dragOverFolderId === 'root' ? 'rgba(74,222,128,0.5)' : 'transparent',
+            backgroundColor: dragOverFolderId === 'root' ? 'rgba(74,222,128,0.04)' : undefined,
+            transition: 'border-color 80ms, background-color 80ms',
+          }}
+          onDragOver={e => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            setDragOverFolderId('root');
+          }}
+          onDragLeave={e => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node))
+              setDragOverFolderId(null);
+          }}
+          onDrop={e => handleFolderDrop(e, folderId)}
+        >
+          {dragOverFolderId === 'root'
+            ? <Upload size={32} className="mx-auto mb-3 text-brand-green-400" />
+            : <FolderOpen size={32} className="mx-auto mb-3 text-zinc-700" />}
+          <p className="text-sm text-zinc-500">
+            {dragOverFolderId === 'root' ? 'Drop to upload here' : 'This folder is empty'}
+          </p>
+          {canEdit && dragOverFolderId !== 'root' && (
             <p className="text-xs text-zinc-600 mt-1">
               Upload files or create a subfolder above.
             </p>

@@ -10,7 +10,7 @@ export const uploadRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base:
 // POST /upload/init — start a multipart upload, get upload ID
 uploadRoutes.post('/init', async (req, env) => {
   const payload = await requireAuth(req, env);
-  const { filename, mimeType, size, projectId, sessionId } = await req.json<any>();
+  const { filename, mimeType, size, projectId, sessionId, folderId } = await req.json<any>();
 
   if (!filename || !size || !projectId)
     throw Object.assign(new Error('Missing required fields'), { status: 400 });
@@ -32,11 +32,12 @@ uploadRoutes.post('/init', async (req, env) => {
   // Pre-create file record with pending status
   await env.DB.prepare(
     `INSERT INTO files (id, project_id, session_id, uploaded_by, r2_key, file_url, filename, original_name,
-                        mime_type, size_bytes, processing_status)
-     VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'pending')`
+                        mime_type, size_bytes, folder_id, processing_status)
+     VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 'pending')`
   ).bind(
     fileId, projectId, sessionId ?? null, payload.sub,
-    r2Key, sanitizeFilename(filename), filename, mimeType ?? 'application/octet-stream', size
+    r2Key, sanitizeFilename(filename), filename, mimeType ?? 'application/octet-stream', size,
+    folderId ?? null
   ).run();
 
   // Store upload session in KV or D1

@@ -1,14 +1,20 @@
 'use client';
-import { useEffect, useState, lazy, Suspense, useCallback, useRef } from 'react';
+import { useEffect, useState, lazy, Suspense, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
 import { useTimelineStore } from '@/store/useTimelineStore';
+import { useUploadStore } from '@/store/useUploadStore';
 import type { AudioFile, Project } from '@stemfer/shared/types';
-import { timecodeToMs } from '@stemfer/shared/utils/timecode';
-import { Download, ArrowLeft, Mic, Music2, Save } from 'lucide-react';
+import { timecodeToMs, msToTimecode } from '@stemfer/shared/utils/timecode';
+import { ArrowLeft, Mic, Music2 } from 'lucide-react';
 import Link from 'next/link';
 import { SkeletonTimeline } from '@/components/ui/Skeleton';
+import { TransportBar } from '@/components/timeline/TransportBar';
+import { MixerPanel }   from '@/components/timeline/MixerPanel';
+import { useAudioEngine } from '@/lib/audio/useAudioEngine';
+import { useDAWShortcuts } from '@/lib/audio/useDAWShortcuts';
+import type { TimelineFileDrop } from '@/components/timeline/TimelineEngine';
 
 const TimelineEngine    = lazy(() => import('@/components/timeline/TimelineEngine').then(m => ({ default: m.TimelineEngine })));
 const WebStudioRecorder = lazy(() => import('@/components/recorder/WebStudioRecorder').then(m => ({ default: m.WebStudioRecorder })));
@@ -19,13 +25,21 @@ export default function TimelinePage() {
   const setClips    = useTimelineStore(s => s.setClips);
   const clips       = useTimelineStore(s => s.clips);
   const setBpm      = useTimelineStore(s => s.setBpm);
-  const setPlaying  = useTimelineStore(s => s.setPlaying);
+  const setTimeSig  = useTimelineStore(s => s.setTimeSig);
   const isPlaying   = useTimelineStore(s => s.isPlaying);
-  const setPlayhead = useTimelineStore(s => s.setPlayhead);
+  const setPlaying  = useTimelineStore(s => s.setPlaying);
+  const setRecording= useTimelineStore(s => s.setRecording);
+  const isRecording = useTimelineStore(s => s.isRecording);
+  const playheadMs  = useTimelineStore(s => s.playheadMs);
+  const showMixer   = useTimelineStore(s => s.showMixer);
+  const splitClipFn = useTimelineStore(s => s.splitClip);
+  const pushHistory = useTimelineStore(s => s.pushHistory);
+  const selectedIds = useTimelineStore(s => s.selectedClipIds);
 
   const [showRecorder, setShowRecorder] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /* ── Data fetching ─────────────────────────────────────────────── */
   const { data: project } = useQuery<Project>({
     queryKey: ['project', id],
     queryFn:  () => api.get(`/projects/${id}`),
@@ -38,7 +52,7 @@ export default function TimelinePage() {
     staleTime: 60_000,
   });
 
-  /* Hydrate timeline clips from file data */
+  /* ── Hydrate clips ─────────────────────────────────────────────── */
   useEffect(() => {
     if (!files.length) return;
     setClips(
@@ -58,10 +72,21 @@ export default function TimelinePage() {
   }, [files, setClips]);
 
   useEffect(() => {
-    if (project?.bpm) setBpm(project.bpm);
-  }, [project, setBpm]);
+    if (project?.bpm)      setBpm(project.bpm);
+    if (project?.time_sig) setTimeSig(project.time_sig);
+  }, [project, setBpm, setTimeSig]);
 
-  /* Save positions — debounced by the caller */
+  /* ── Build file URL map for audio engine ───────────────────────── */
+  const fileUrls = useMemo(() => {
+    const map = new Map<string, string>();
+    files.filter(f => f.file_type === 'audio').forEach(f => map.set(f.id, f.file_url));
+    return map;
+  }, [files]);
+
+  /* ── Audio engine ──────────────────────────────────────────────── */
+  const { engine } = useAudioEngine(fileUrls);
+
+  /* ── Save ──────────────────────────────────────────────────────── */
   const savePositions = useMutation({
     mutationFn: async () => {
       await Promise.all(
@@ -84,114 +109,145 @@ export default function TimelinePage() {
     saveTimerRef.current = setTimeout(() => savePositions.mutate(), 1500);
   }, [savePositions]);
 
-  /* Keyboard shortcuts */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  /* ── Split at playhead ─────────────────────────────────────────── */
+  const handleSplitAtPlayhead = useCallback(() => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) {
+      /* Split all clips at playhead */
+      clips.forEach(c => {
+        if (playheadMs > c.offsetMs && playheadMs < c.offsetMs + c.durationMs) {
+          pushHistory();
+          splitClipFn(c.fileId, playheadMs);
+        }
+      });
+    } else {
+      ids.forEach(fileId => {
+        const c = clips.find(x => x.fileId === fileId);
+        if (c && playheadMs > c.offsetMs && playheadMs < c.offsetMs + c.durationMs) {
+          pushHistory();
+          splitClipFn(fileId, playheadMs);
+        }
+      });
+    }
+  }, [clips, selectedIds, playheadMs, splitClipFn, pushHistory]);
 
-      switch (e.code) {
-        case 'Space':
-          e.preventDefault();
-          setPlaying(!isPlaying);
-          break;
-        case 'Home':
-          e.preventDefault();
-          setPlayhead(0);
-          setPlaying(false);
-          break;
-        case 'KeyS':
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            savePositions.mutate();
-          }
-          break;
-        case 'KeyR':
-          if (!e.metaKey && !e.ctrlKey) setShowRecorder(s => !s);
-          break;
+  /* ── Record toggle ─────────────────────────────────────────────── */
+  const handleRecord = useCallback(() => {
+    setShowRecorder(s => !s);
+    if (!isRecording) setRecording(true);
+    else setRecording(false);
+  }, [isRecording, setRecording]);
+
+  /* ── Keyboard shortcuts ────────────────────────────────────────── */
+  useDAWShortcuts(
+    () => savePositions.mutate(),
+    handleRecord,
+    handleSplitAtPlayhead,
+  );
+
+  /* ── System file drop onto timeline tracks ─────────────────────── */
+  const addClip = useTimelineStore(s => s.addClip);
+  const startUpload = useUploadStore(s => s.startUpload);
+
+  const handleTimelineFileDrop = useCallback(async ({ files, trackIndex, offsetMs }: TimelineFileDrop) => {
+    for (const file of files) {
+      const placeholderId = `drop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      /* Add a placeholder clip immediately so the user sees something */
+      addClip({
+        fileId:        placeholderId,
+        track:         trackIndex,
+        offsetMs,
+        durationMs:    30_000,
+        startTimecode: msToTimecode(offsetMs),
+        label:         file.name,
+        waveformData:  [],
+        isLocked:      false,
+        isMuted:       false,
+      });
+
+      try {
+        const realFileId = await startUpload(file, id);
+        /* Replace the placeholder with the real file ID once upload starts */
+        useTimelineStore.getState().updateClip(placeholderId, { fileId: realFileId });
+        /* Revalidate files so the clip gets proper metadata after processing */
+        qc.invalidateQueries({ queryKey: ['files', id] });
+      } catch {
+        /* Remove placeholder on failure */
+        useTimelineStore.getState().deleteClips([placeholderId]);
       }
-    };
-
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isPlaying, setPlaying, setPlayhead, savePositions]);
-
-  const exportStems = async () => {
-    const res = await api.post<{ url: string }>('/files/export', {
-      projectId: id,
-      clips: clips.map(c => ({ fileId: c.fileId, offsetMs: c.offsetMs, track: c.track })),
-    });
-    window.open(res.url, '_blank');
-  };
+    }
+  }, [id, addClip, startUpload, qc]);
 
   return (
-    <div className="flex flex-col h-screen bg-surface">
-      {/* ── Header ──────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 px-5 py-2.5 border-b border-surface-300 flex-shrink-0 bg-surface-100">
+    <div className="flex flex-col h-screen bg-surface overflow-hidden">
+      {/* ── Page header ────────────────────────────────────────────── */}
+      <div
+        className="flex items-center gap-2 px-4 border-b border-surface-300 flex-shrink-0 bg-[#0a0a0a]"
+        style={{ height: 38 }}
+      >
         <Link
           href={`/projects/${id}`}
-          className="p-1.5 rounded hover:bg-surface-300 text-zinc-500 hover:text-white flex-shrink-0"
-          style={{ transition: 'background-color var(--duration-fast), color var(--duration-fast)' }}
+          className="p-1 rounded hover:bg-surface-300 text-zinc-600 hover:text-white flex-shrink-0"
+          style={{ transition: 'color var(--duration-fast)' }}
         >
-          <ArrowLeft size={15} />
+          <ArrowLeft size={13} />
         </Link>
 
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xs font-semibold text-white flex items-center gap-1.5 leading-tight">
-            <Music2 size={12} className="text-brand-green-400 flex-shrink-0" />
-            <span className="truncate">{project?.name ?? '…'}</span>
-            <span className="text-zinc-600">— Timeline</span>
-          </h1>
-          <p className="text-[10px] text-zinc-600 mt-0.5">
-            {clips.length} track{clips.length !== 1 ? 's' : ''} · Space to play · ⌘S to save
-          </p>
-        </div>
+        <Music2 size={11} className="text-brand-green-400 flex-shrink-0" />
+        <span className="text-xs text-zinc-400 truncate">
+          {project?.name ?? '…'}
+        </span>
+        <span className="text-zinc-700 text-xs">/ Timeline</span>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={() => setShowRecorder(s => !s)}
-            className={`btn-ghost text-xs px-3 ${showRecorder ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/15' : ''}`}
-          >
-            <Mic size={12} />
-            Record
-          </button>
-          <button
-            onClick={() => savePositions.mutate()}
-            disabled={savePositions.isPending}
-            className="btn-ghost text-xs px-3"
-          >
-            <Save size={12} />
-            {savePositions.isPending ? 'Saving…' : 'Save'}
-          </button>
-          <button onClick={exportStems} className="btn-primary text-xs px-3">
-            <Download size={12} />
-            Export
-          </button>
-        </div>
+        <div className="flex-1" />
+
+        <button
+          onClick={() => setShowRecorder(s => !s)}
+          className={`flex items-center gap-1 text-[10px] px-2 h-6 rounded border ${
+            showRecorder
+              ? 'bg-red-500/15 border-red-500/40 text-red-400'
+              : 'border-surface-300 text-zinc-500 hover:text-white'
+          }`}
+          style={{ transition: 'color var(--duration-fast)' }}
+        >
+          <Mic size={10} />
+          {showRecorder ? 'Hide recorder' : 'Record'}
+        </button>
       </div>
 
-      {/* ── Recorder panel ──────────────────────────────────────────── */}
+      {/* ── Transport bar ──────────────────────────────────────────── */}
+      <TransportBar
+        onSave={() => savePositions.mutate()}
+        isSaving={savePositions.isPending}
+        totalTracks={clips.length}
+      />
+
+      {/* ── Recorder panel ─────────────────────────────────────────── */}
       {showRecorder && (
-        <div className="border-b border-surface-300 bg-surface-100 flex-shrink-0 overflow-hidden">
-          <Suspense fallback={<div className="h-36 animate-pulse rounded" />}>
+        <div className="border-b border-surface-300 bg-surface-100 flex-shrink-0">
+          <Suspense fallback={<div className="h-36 animate-pulse" />}>
             <WebStudioRecorder
               projectId={id}
               bpm={project?.bpm ?? 120}
               onSaved={() => {
                 qc.invalidateQueries({ queryKey: ['files', id] });
                 setShowRecorder(false);
+                setRecording(false);
               }}
             />
           </Suspense>
         </div>
       )}
 
-      {/* ── Timeline ────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden">
+      {/* ── Timeline canvas — flex-1 ────────────────────────────────── */}
+      <div className="flex-1 overflow-hidden min-h-0">
         <Suspense fallback={<SkeletonTimeline tracks={clips.length || 4} />}>
-          <TimelineEngine />
+          <TimelineEngine onFileDrop={handleTimelineFileDrop} />
         </Suspense>
       </div>
+
+      {/* ── Mixer panel (bottom) ───────────────────────────────────── */}
+      {showMixer && <MixerPanel />}
     </div>
   );
 }

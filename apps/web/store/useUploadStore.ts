@@ -12,7 +12,7 @@ interface UploadStore {
   addUpload:    (fileId: string, state: ChunkUploadState) => void;
   updateUpload: (fileId: string, partial: Partial<ChunkUploadState>) => void;
   removeUpload: (fileId: string) => void;
-  startUpload:  (file: File, projectId: string, sessionId?: string) => Promise<string>;
+  startUpload:  (file: File, projectId: string, sessionId?: string, folderId?: string | null) => Promise<string>;
   pauseUpload:  (fileId: string) => void;
   resumeUpload: (fileId: string, file: File) => Promise<void>;
   abortUpload:  (fileId: string) => Promise<void>;
@@ -38,13 +38,14 @@ export const useUploadStore = create<UploadStore>((set, get) => ({
     set(s => { const m = new Map(s.uploads); m.delete(fileId); return { uploads: m }; });
   },
 
-  async startUpload(file, projectId, sessionId) {
+  async startUpload(file, projectId, sessionId, folderId) {
     const init = await api.post<{ uploadId: string; fileId: string; r2Key: string; totalChunks: number }>('/upload/init', {
       filename: file.name,
       mimeType: file.type || 'application/octet-stream',
       size:     file.size,
       projectId,
       sessionId,
+      ...(folderId != null ? { folderId } : {}),
     });
 
     const state: ChunkUploadState = {
