@@ -205,10 +205,21 @@ transferRoutes.get('/download/:token', async (req, env) => {
   if (transfer.status !== 'ready' || !transfer.zip_r2_key)
     return json({ status: transfer.status, message: 'Transfer is still being processed. Please check back in a moment.' });
 
-  /* Increment download count before streaming */
-  await env.DB.prepare(
-    `UPDATE transfers SET download_count = download_count + 1 WHERE id = ?`
-  ).bind(transfer.id).run();
+  /* Increment download count and record event before streaming */
+  const dlId = nanoid();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE transfers SET download_count = download_count + 1, updated_at = datetime('now') WHERE id = ?`
+    ).bind(transfer.id),
+    env.DB.prepare(
+      `INSERT INTO transfer_downloads (id, transfer_id, ip, user_agent) VALUES (?, ?, ?, ?)`
+    ).bind(
+      dlId,
+      transfer.id,
+      req.headers.get('CF-Connecting-IP') ?? req.headers.get('X-Forwarded-For') ?? null,
+      req.headers.get('User-Agent')?.slice(0, 200) ?? null,
+    ),
+  ]);
 
   /* Stream the ZIP directly from R2 */
   const obj = await env.FILES.get(transfer.zip_r2_key);
@@ -266,12 +277,47 @@ transferRoutes.get('/my', async (req, env) => {
   }
 
   const rows = await env.DB.prepare(
-    `SELECT id, recipient_email, status, zip_size_bytes, download_count, max_downloads,
-            download_token, created_at, expires_at
-     FROM transfers
-     WHERE sender_email = ? AND status != 'deleted'
-     ORDER BY created_at DESC LIMIT 20`
+    `SELECT t.id, t.recipient_email, t.message, t.status, t.zip_size_bytes,
+            t.download_count, t.max_downloads, t.download_token,
+            t.created_at, t.expires_at,
+            COUNT(f.id) as file_count,
+            GROUP_CONCAT(f.original_name, '||') as file_names
+     FROM transfers t
+     LEFT JOIN transfer_files f ON f.transfer_id = t.id AND f.status = 'uploaded'
+     WHERE t.sender_email = ? AND t.status != 'deleted'
+     GROUP BY t.id
+     ORDER BY t.created_at DESC LIMIT 20`
   ).bind(payload.email).all();
+
+  return json(rows.results);
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   GET /transfer/:id/downloads
+   List individual download events for a transfer (sender only).
+───────────────────────────────────────────────────────────────────────── */
+transferRoutes.get('/:id/downloads', async (req, env) => {
+  let payload: { sub: string; email: string } | null = null;
+  try {
+    payload = await requireAuth(req, env) as any;
+  } catch {
+    throw Object.assign(new Error('Unauthorized'), { status: 401 });
+  }
+
+  const { id } = req.params as { id: string };
+
+  const transfer = await env.DB.prepare(
+    `SELECT id FROM transfers WHERE id = ? AND sender_email = ? AND status != 'deleted'`
+  ).bind(id, payload.email).first<{ id: string }>();
+
+  if (!transfer) throw Object.assign(new Error('Transfer not found'), { status: 404 });
+
+  const rows = await env.DB.prepare(
+    `SELECT id, downloaded_at, ip, user_agent
+     FROM transfer_downloads
+     WHERE transfer_id = ?
+     ORDER BY downloaded_at DESC LIMIT 100`
+  ).bind(id).all();
 
   return json(rows.results);
 });

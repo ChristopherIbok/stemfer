@@ -2,10 +2,14 @@
 
 import { useCallback, useState, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { useQuery } from '@tanstack/react-query';
 import {
   Upload, X, CheckCircle2, AlertCircle, Music, File as FileIcon,
-  ArrowRight, Send, Clock, Zap,
+  ArrowRight, Send, Clock, Zap, Download, Link as LinkIcon,
+  ChevronDown, ChevronUp, Users,
 } from 'lucide-react';
+import { api } from '@/lib/api/client';
+import { useAuthStore } from '@/store/useAuthStore';
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 interface FileEntry {
@@ -23,6 +27,29 @@ const API        = process.env.NEXT_PUBLIC_API_URL ?? 'https://stemfer-api.ibokc
 const CHUNK_SIZE = 5 * 1024 * 1024;
 const PARALLEL   = 3;
 const RETRIES    = 3;
+
+/* ── My Transfers types ─────────────────────────────────────────────── */
+interface MyTransfer {
+  id:              string;
+  recipient_email: string;
+  message:         string | null;
+  status:          string;
+  zip_size_bytes:  number | null;
+  download_count:  number;
+  max_downloads:   number;
+  download_token:  string | null;
+  created_at:      string;
+  expires_at:      string;
+  file_count:      number;
+  file_names:      string | null;
+}
+
+interface DownloadEvent {
+  id:            string;
+  downloaded_at: string;
+  ip:            string | null;
+  user_agent:    string | null;
+}
 
 /* ── Upload store hook ────────────────────────────────────────────── */
 function useTransfer() {
@@ -303,6 +330,9 @@ export default function TransferPage() {
         </div>
       </section>
 
+      {/* ── My Transfers ────────────────────────────────────────────── */}
+      <MyTransfers />
+
       {/* ── Modal overlay ───────────────────────────────────────────── */}
       {cardOpen && (
         <div
@@ -563,6 +593,181 @@ function FileRow({
         >
           <X size={11} />
         </button>
+      )}
+    </div>
+  );
+}
+
+/* ── My Transfers section ────────────────────────────────────────────── */
+function MyTransfers() {
+  const token = useAuthStore(s => s.token);
+
+  const { data: transfers = [], isLoading } = useQuery<MyTransfer[]>({
+    queryKey: ['my-transfers'],
+    queryFn:  () => api.get('/transfer/my'),
+    enabled:  !!token,
+    staleTime: 30_000,
+  });
+
+  if (!token) return null;
+
+  return (
+    <section className="px-6 pb-16 max-w-3xl mx-auto w-full">
+      <h2 className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">
+        My Transfers
+      </h2>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="h-16 rounded-xl bg-surface-100 animate-pulse" />
+          ))}
+        </div>
+      ) : transfers.length === 0 ? (
+        <div className="card border-dashed text-center py-8">
+          <Send size={20} className="text-zinc-600 mx-auto mb-2" />
+          <p className="text-sm text-zinc-500">No transfers yet</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {transfers.map(t => <TransferRow key={t.id} transfer={t} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TransferRow({ transfer: t }: { transfer: MyTransfer }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const downloadUrl = t.download_token
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/transfer/download/${t.download_token}`
+    : null;
+
+  const { data: events, isFetching } = useQuery<DownloadEvent[]>({
+    queryKey: ['transfer-downloads', t.id],
+    queryFn:  () => api.get(`/transfer/${t.id}/downloads`),
+    enabled:  open,
+    staleTime: 15_000,
+  });
+
+  const fileList = t.file_names
+    ? t.file_names.split('||').slice(0, 3)
+    : [];
+  const extraFiles = (t.file_count ?? 0) - fileList.length;
+
+  const isExpired  = new Date(t.expires_at) < new Date();
+  const isPending  = t.status === 'processing' || t.status === 'uploading';
+  const isFailed   = t.status === 'failed';
+
+  const copyLink = () => {
+    if (!downloadUrl) return;
+    navigator.clipboard.writeText(downloadUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="bg-surface-100 border border-surface-300 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3">
+        {/* Status dot */}
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          isFailed ? 'bg-red-500' :
+          isPending ? 'bg-yellow-400 animate-pulse' :
+          isExpired ? 'bg-zinc-600' :
+          'bg-brand-green-400'
+        }`} />
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-white truncate max-w-[200px]">
+              To: {t.recipient_email}
+            </span>
+            {fileList.length > 0 && (
+              <span className="text-[10px] text-zinc-600 truncate">
+                {fileList.join(', ')}{extraFiles > 0 ? ` +${extraFiles} more` : ''}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-0.5">
+            <span className="text-[10px] text-zinc-600 flex items-center gap-1">
+              <Clock size={9} />
+              {new Date(t.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            </span>
+            {!isPending && !isFailed && (
+              <span className="text-[10px] text-zinc-500 flex items-center gap-1">
+                <Download size={9} />
+                {t.download_count} / {t.max_downloads} downloads
+              </span>
+            )}
+            {isPending && <span className="text-[10px] text-yellow-400">Processing…</span>}
+            {isFailed  && <span className="text-[10px] text-red-400">Failed</span>}
+            {isExpired && !isPending && !isFailed && <span className="text-[10px] text-zinc-600">Expired</span>}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {downloadUrl && !isExpired && !isFailed && !isPending && (
+            <button
+              onClick={copyLink}
+              title="Copy download link"
+              className="p-1.5 rounded-lg hover:bg-surface-300 text-zinc-500 hover:text-brand-green-400 transition-colors"
+              style={{ transitionDuration: 'var(--duration-fast)' }}
+            >
+              {copied ? <CheckCircle2 size={13} className="text-brand-green-400" /> : <LinkIcon size={13} />}
+            </button>
+          )}
+          {t.download_count > 0 && (
+            <button
+              onClick={() => setOpen(o => !o)}
+              title="Show download history"
+              className="p-1.5 rounded-lg hover:bg-surface-300 text-zinc-500 hover:text-white transition-colors flex items-center gap-1"
+              style={{ transitionDuration: 'var(--duration-fast)' }}
+            >
+              <Users size={13} />
+              {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Download link bar */}
+      {downloadUrl && !isExpired && !isFailed && !isPending && (
+        <div className="px-4 pb-2.5 -mt-1">
+          <p className="text-[10px] text-brand-green-400 font-mono truncate opacity-60">{downloadUrl}</p>
+        </div>
+      )}
+
+      {/* Download events */}
+      {open && (
+        <div className="border-t border-surface-300 px-4 py-3">
+          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest mb-2">Download History</p>
+          {isFetching ? (
+            <p className="text-xs text-zinc-600">Loading…</p>
+          ) : events && events.length > 0 ? (
+            <div className="space-y-1.5">
+              {events.map((ev, i) => (
+                <div key={ev.id} className="flex items-start gap-2 text-[11px]">
+                  <span className="text-zinc-600 flex-shrink-0 tabular-nums">#{i + 1}</span>
+                  <span className="text-zinc-400">
+                    {new Date(ev.downloaded_at).toLocaleString(undefined, {
+                      month: 'short', day: 'numeric',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </span>
+                  {ev.ip && (
+                    <span className="text-zinc-600 font-mono">{ev.ip}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-600">No download events recorded.</p>
+          )}
+        </div>
       )}
     </div>
   );

@@ -6,13 +6,9 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 CORS_ORIGIN = "https://stemfer.com"
-# Gmail sender display name + address (not a secret — safe as a var)
-GMAIL_SENDER = "Stemfer <noreply@stemfer.com>"
 
 # Secrets — set with: wrangler secret put <NAME>
-# GMAIL_CLIENT_ID      = from Google Cloud Console → OAuth 2.0 Client ID
-# GMAIL_CLIENT_SECRET  = from Google Cloud Console → OAuth 2.0 Client Secret
-# GMAIL_REFRESH_TOKEN  = offline refresh token (see setup guide in .env.example)
+# RESEND_API_KEY  = from resend.com dashboard (domain noreply@stemfer.com must be verified)
 
 [[d1_databases]]
 binding = "DB"

@@ -80,13 +80,16 @@ export async function handleTransferJob(job: TransferJob, env: Env): Promise<voi
     ]);
 
     /* Log any email failures without failing the whole job */
-    for (const result of emailResults) {
+    const emailLabels = ['recipient', 'sender'];
+    for (let i = 0; i < emailResults.length; i++) {
+      const result = emailResults[i];
       if (result.status === 'rejected') {
-        console.error('[transfer-processor] email send failed:', result.reason);
-        /* Store the warning but don't fail the transfer — files are ready */
+        console.error(`[transfer-processor] ${emailLabels[i]} email failed:`, result.reason);
         await env.DB.prepare(
           `UPDATE transfers SET error = ? WHERE id = ?`
-        ).bind(`Email delivery warning: ${result.reason}`, transferId).run().catch(() => {});
+        ).bind(`Email delivery warning (${emailLabels[i]}): ${result.reason}`, transferId).run().catch(() => {});
+      } else {
+        console.log(`[transfer-processor] ${emailLabels[i]} email sent ok`);
       }
     }
 
@@ -104,121 +107,39 @@ async function markFailed(env: Env, transferId: string, reason: string) {
   ).bind(reason, transferId).run().catch(() => {});
 }
 
-/* ── Email via Gmail API (OAuth2) ─────────────────────────────────────────
-   Flow:
-     1. POST to Google's token endpoint with the refresh token to get a
-        short-lived access token (valid 1 hour).
-     2. POST to Gmail API /users/me/messages/send with a base64url-encoded
-        RFC-2822 message.
-   Required secrets (wrangler secret put):
-     GMAIL_CLIENT_ID      — OAuth2 client ID from Google Cloud Console
-     GMAIL_CLIENT_SECRET  — OAuth2 client secret
-     GMAIL_REFRESH_TOKEN  — offline refresh token (see setup guide below)
-     GMAIL_SENDER         — display string, e.g. "Stemfer <you@gmail.com>"
+/* ── Email via Resend ─────────────────────────────────────────────────────
+   Required secret (wrangler secret put RESEND_API_KEY):
+     RESEND_API_KEY — from resend.com dashboard
+   Sends from: Stemfer <noreply@stemfer.com>
+   (Domain must be verified in your Resend account.)
 ─────────────────────────────────────────────────────────────────────── */
 
-/** Exchange the stored refresh token for a fresh access token. */
-async function getGmailAccessToken(env: Env): Promise<string> {
-  if (!env.GMAIL_CLIENT_ID || !env.GMAIL_CLIENT_SECRET || !env.GMAIL_REFRESH_TOKEN) {
-    throw new Error('Gmail OAuth credentials are not configured (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN)');
-  }
-
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     env.GMAIL_CLIENT_ID,
-      client_secret: env.GMAIL_CLIENT_SECRET,
-      refresh_token: env.GMAIL_REFRESH_TOKEN,
-      grant_type:    'refresh_token',
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Gmail token refresh failed (${res.status}): ${body}`);
-  }
-
-  const data = await res.json<{ access_token: string; error?: string }>();
-  if (data.error || !data.access_token) {
-    throw new Error(`Gmail token error: ${data.error ?? 'no access_token returned'}`);
-  }
-
-  return data.access_token;
-}
-
-/** Encode a string to base64url (URL-safe base64, no padding). */
-function toBase64Url(str: string): string {
-  const b64 = btoa(unescape(encodeURIComponent(str)));
-  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/**
- * Build an RFC-2822 email message string.
- * Gmail API requires MIME encoded as base64url.
- */
-function buildMimeMessage(opts: {
-  from:    string;
-  to:      string;
-  subject: string;
-  html:    string;
-}): string {
-  const boundary = `boundary_${Date.now()}`;
-  const lines = [
-    `From: ${opts.from}`,
-    `To: ${opts.to}`,
-    `Subject: ${opts.subject}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    ``,
-    `--${boundary}`,
-    `Content-Type: text/plain; charset="UTF-8"`,
-    `Content-Transfer-Encoding: 7bit`,
-    ``,
-    /* Plain-text fallback — strip HTML tags for a minimal readable version */
-    opts.html.replace(/<[^>]+>/g, '').replace(/\s{2,}/g, ' ').trim(),
-    ``,
-    `--${boundary}`,
-    `Content-Type: text/html; charset="UTF-8"`,
-    `Content-Transfer-Encoding: 7bit`,
-    ``,
-    opts.html,
-    ``,
-    `--${boundary}--`,
-  ];
-  return lines.join('\r\n');
-}
-
-/** Send one email via the Gmail API. Throws on any failure. */
+/** Send one email via the Resend API. Throws on any failure. */
 async function sendEmail(
   env: Env,
   opts: { to: string; subject: string; html: string },
 ): Promise<void> {
-  const sender      = env.GMAIL_SENDER || 'Stemfer <noreply@stemfer.com>';
-  const accessToken = await getGmailAccessToken(env);
+  if (!env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY is not configured');
+  }
 
-  const raw = toBase64Url(buildMimeMessage({
-    from:    sender,
-    to:      opts.to,
-    subject: opts.subject,
-    html:    opts.html,
-  }));
-
-  const res = await fetch(
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
-    {
-      method:  'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type':  'application/json',
-      },
-      body: JSON.stringify({ raw }),
+  const res = await fetch('https://api.resend.com/emails', {
+    method:  'POST',
+    headers: {
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type':  'application/json',
     },
-  );
+    body: JSON.stringify({
+      from:    'Stemfer <noreply@stemfer.com>',
+      to:      [opts.to],
+      subject: opts.subject,
+      html:    opts.html,
+    }),
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => '(no body)');
-    throw new Error(`Gmail API ${res.status}: ${body}`);
+    throw new Error(`Resend API ${res.status}: ${body}`);
   }
 }
 

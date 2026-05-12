@@ -14,11 +14,8 @@ export interface Env {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   APPLE_CLIENT_ID: string;
-  // Gmail API — OAuth2 service account credentials for sending email
-  GMAIL_CLIENT_ID: string;
-  GMAIL_CLIENT_SECRET: string;
-  GMAIL_REFRESH_TOKEN: string;
-  GMAIL_SENDER: string;  // e.g. "Stemfer <noreply@yourgmail.com>"
+  // Resend — transactional email
+  RESEND_API_KEY: string;
   // Vars
   ENVIRONMENT: string;
   CORS_ORIGIN: string;
