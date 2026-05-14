@@ -13,7 +13,7 @@ export default function UploadPage() {
   });
 
   return (
-    <div className="p-8 max-w-2xl mx-auto space-y-6 animate-fade-in">
+    <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-6 animate-fade-in">
       <div>
         <h1 className="text-2xl font-bold text-white tracking-tight">Upload Files</h1>
         <p className="text-zinc-500 text-sm mt-1">Upload audio or DAW project files to a project.</p>

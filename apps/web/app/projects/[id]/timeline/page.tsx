@@ -179,7 +179,7 @@ export default function TimelinePage() {
   }, [id, addClip, startUpload, qc]);
 
   return (
-    <div className="flex flex-col h-screen bg-surface overflow-hidden">
+    <div className="flex flex-col h-full bg-surface overflow-hidden">
       {/* ── Page header ────────────────────────────────────────────── */}
       <div
         className="flex items-center gap-2 px-4 border-b border-surface-300 flex-shrink-0 bg-[#0a0a0a]"

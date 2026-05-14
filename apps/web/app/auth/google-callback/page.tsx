@@ -48,7 +48,9 @@ function GoogleCallbackInner() {
       })
       .then(({ token, user }) => {
         setAuth(token, user);
-        router.replace('/dashboard');
+        const redirect = localStorage.getItem('auth_redirect') ?? '/projects';
+        localStorage.removeItem('auth_redirect');
+        router.replace(redirect);
       })
       .catch((err: Error) => {
         console.error('Google OAuth error:', err);

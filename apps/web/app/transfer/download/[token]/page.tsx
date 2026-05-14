@@ -2,13 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import { useParams }           from 'next/navigation';
-import { Download, Clock, AlertCircle, Music2 } from 'lucide-react';
+import { Download, Clock, AlertCircle, Music2, File as FileIcon, Music } from 'lucide-react';
 
-interface StatusPayload {
-  status:        string;  // 'uploading' | 'processing' | 'ready' | 'failed'
-  message?:      string;
-  zip_size_bytes?: number | null;
-  expires_at?:   string;
+interface FileEntry {
+  id:        string;
+  name:      string;
+  mimeType:  string;
+  sizeBytes: number;
+}
+
+interface TransferPayload {
+  senderEmail:   string;
+  message:       string | null;
+  expiresAt:     string;
+  downloadsLeft: number;
+  files:         FileEntry[];
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://stemfer-api.ibokchris.workers.dev';
@@ -16,77 +24,54 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'https://stemfer-api.ibokchris.wo
 export default function TransferDownloadPage() {
   const { token } = useParams<{ token: string }>();
 
-  const [status,      setStatus]      = useState<'loading' | 'ready' | 'processing' | 'error'>('loading');
-  const [errorMsg,    setErrorMsg]    = useState('');
-  const [zipSize,     setZipSize]     = useState<number | null>(null);
-  const [expiresAt,   setExpiresAt]   = useState('');
-  const [downloading, setDownloading] = useState(false);
+  const [phase,    setPhase]    = useState<'loading' | 'ready' | 'error'>('loading');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [transfer, setTransfer] = useState<TransferPayload | null>(null);
+  const [downloading, setDownloading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    let stopped = false;
-
-    async function poll() {
+    async function load() {
       try {
-        /* HEAD the download URL to check status without consuming the download */
-        const res = await fetch(`${API}/transfer/status/${token}`);
+        const res = await fetch(`${API}/transfer/download/${token}`);
         if (!res.ok) {
-          if (res.status === 404 || res.status === 410) {
-            const err = await res.json().catch(() => ({})) as { error?: string };
-            setErrorMsg(err.error ?? 'Transfer not found or expired.');
-            setStatus('error');
-            return;
-          }
-          setErrorMsg(`Server error (${res.status})`);
-          setStatus('error');
+          const err = await res.json().catch(() => ({})) as { error?: string };
+          setErrorMsg(err.error ?? `Error ${res.status}`);
+          setPhase('error');
           return;
         }
-
-        const data = await res.json() as StatusPayload;
-
-        if (data.status === 'ready') {
-          setZipSize(data.zip_size_bytes ?? null);
-          setExpiresAt(data.expires_at ?? '');
-          setStatus('ready');
-        } else if (data.status === 'failed') {
-          setErrorMsg('Transfer processing failed. Please ask the sender to retry.');
-          setStatus('error');
-        } else {
-          /* Still processing — poll again */
-          setStatus('processing');
-          if (!stopped) setTimeout(poll, 3000);
-        }
+        const data = await res.json() as TransferPayload;
+        setTransfer(data);
+        setPhase('ready');
       } catch {
         setErrorMsg('Could not reach server. Please refresh and try again.');
-        setStatus('error');
+        setPhase('error');
       }
     }
-
-    poll();
-    return () => { stopped = true; };
+    load();
   }, [token]);
 
-  const handleDownload = () => {
-    setDownloading(true);
-    /* Navigate directly — browser handles Content-Disposition: attachment */
-    window.location.href = `${API}/transfer/download/${token}`;
-    setTimeout(() => setDownloading(false), 3000);
+  const downloadFile = (file: FileEntry) => {
+    setDownloading(prev => ({ ...prev, [file.id]: true }));
+    window.location.href = `${API}/transfer/download/${token}/file/${file.id}`;
+    setTimeout(() => setDownloading(prev => ({ ...prev, [file.id]: false })), 3000);
   };
 
-  const expiryStr = expiresAt
-    ? new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+  const expiryStr = transfer?.expiresAt
+    ? new Date(transfer.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
     : '';
+
+  const totalSize = transfer?.files.reduce((s, f) => s + f.sizeBytes, 0) ?? 0;
 
   return (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
-      {/* Logo */}
       <div className="mb-10 flex items-center gap-2 text-brand-green-400">
         <Music2 size={20} />
         <span className="text-xl font-bold tracking-tight">Stemfer</span>
       </div>
 
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         {/* Loading */}
-        {status === 'loading' && (
+        {phase === 'loading' && (
           <div className="card space-y-4 animate-pulse pointer-events-none">
             <div className="w-14 h-14 rounded-full bg-surface-300 mx-auto" />
             <div className="h-5 w-40 bg-surface-300 rounded mx-auto" />
@@ -96,21 +81,8 @@ export default function TransferDownloadPage() {
           </div>
         )}
 
-        {/* Processing */}
-        {status === 'processing' && (
-          <div className="card text-center space-y-4">
-            <div className="w-14 h-14 rounded-full bg-brand-green-500/10 border border-brand-green-500/20 flex items-center justify-center mx-auto animate-pulse">
-              <Download size={24} className="text-brand-green-400" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white mb-2">Preparing your files…</h2>
-              <p className="text-zinc-500 text-sm">Files are being compressed. This page updates automatically.</p>
-            </div>
-          </div>
-        )}
-
         {/* Error */}
-        {status === 'error' && (
+        {phase === 'error' && (
           <div className="card text-center space-y-4">
             <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto">
               <AlertCircle size={24} className="text-red-400" />
@@ -123,21 +95,27 @@ export default function TransferDownloadPage() {
         )}
 
         {/* Ready */}
-        {status === 'ready' && (
+        {phase === 'ready' && transfer && (
           <div className="card space-y-5 animate-fade-in">
-            <div className="flex justify-center">
-              <div className="w-14 h-14 rounded-full bg-brand-green-500/12 border border-brand-green-500/25 flex items-center justify-center">
+            {/* Header */}
+            <div className="text-center">
+              <div className="w-14 h-14 rounded-full bg-brand-green-500/12 border border-brand-green-500/25 flex items-center justify-center mx-auto mb-4">
                 <Download size={24} className="text-brand-green-400" />
               </div>
+              <h2 className="text-lg font-bold text-white mb-1">
+                {transfer.files.length} {transfer.files.length === 1 ? 'file' : 'files'} from {transfer.senderEmail}
+              </h2>
+              <p className="text-zinc-500 text-sm">{formatBytes(totalSize)} total</p>
             </div>
 
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-white mb-1">Files ready</h2>
-              {zipSize && (
-                <p className="text-zinc-500 text-sm">{formatBytes(zipSize)} compressed archive</p>
-              )}
-            </div>
+            {/* Message */}
+            {transfer.message && (
+              <div className="bg-surface-200 border border-surface-300 rounded-lg px-4 py-3">
+                <p className="text-sm text-zinc-400 italic">&ldquo;{transfer.message}&rdquo;</p>
+              </div>
+            )}
 
+            {/* Expiry */}
             {expiryStr && (
               <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-600 py-3 border-y border-surface-300">
                 <Clock size={11} />
@@ -145,17 +123,39 @@ export default function TransferDownloadPage() {
               </div>
             )}
 
-            <button
-              onClick={handleDownload}
-              disabled={downloading}
-              className="btn-primary w-full justify-center text-sm"
-            >
-              <Download size={15} />
-              {downloading ? 'Starting download…' : 'Download Files'}
-            </button>
+            {/* File list */}
+            <div className="space-y-2">
+              {transfer.files.map(file => {
+                const isAudio = /\.(wav|mp3|aiff|flac|ogg|m4a)$/i.test(file.name);
+                return (
+                  <div
+                    key={file.id}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-200 border border-surface-300"
+                  >
+                    <div className="p-1.5 rounded bg-surface-300 flex-shrink-0">
+                      {isAudio
+                        ? <Music    size={12} className="text-brand-green-400" />
+                        : <FileIcon size={12} className="text-zinc-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-white truncate">{file.name}</p>
+                      <p className="text-[10px] text-zinc-500">{formatBytes(file.sizeBytes)}</p>
+                    </div>
+                    <button
+                      onClick={() => downloadFile(file)}
+                      disabled={downloading[file.id]}
+                      className="btn-ghost py-1 px-2 text-xs flex-shrink-0 disabled:opacity-50"
+                    >
+                      <Download size={12} />
+                      {downloading[file.id] ? 'Starting…' : 'Download'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
 
             <p className="text-[10px] text-zinc-700 text-center">
-              No account needed. Files auto-delete after expiry.
+              No account needed · Files auto-delete after expiry
             </p>
           </div>
         )}
@@ -164,8 +164,7 @@ export default function TransferDownloadPage() {
   );
 }
 
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '—';
+function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
   return `${(bytes / 1e3).toFixed(0)} KB`;

@@ -334,7 +334,8 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
   }, [trackTops, totalTracks]);
 
   const onTrackDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes('Files')) return;
+    const types = Array.from(e.dataTransfer.types).map(t => t.toLowerCase());
+    if (!types.includes('files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOverTrack(getTrackAtY(e.clientY));
@@ -351,7 +352,8 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
     setDragOverTrack(null);
     if (!onFileDrop) return;
     const files = Array.from(e.dataTransfer.files).filter(f =>
-      /\.(wav|mp3|aiff|flac|ogg|m4a|als|logicx|song|ptx|rpp)$/i.test(f.name)
+      /\.(wav|mp3|aiff|aif|flac|ogg|m4a|opus|webm|als|logicx|song|ptx|rpp)$/i.test(f.name) ||
+      f.type.startsWith('audio/')
     );
     if (!files.length) return;
     const rect = scrollRef.current!.getBoundingClientRect();

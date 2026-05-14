@@ -18,7 +18,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!token) {
-      router.replace('/auth/login');
+      const redirect = window.location.pathname + window.location.search;
+      router.replace(`/auth/login?redirect=${encodeURIComponent(redirect)}`);
       return;
     }
     if (!user) refreshUser();

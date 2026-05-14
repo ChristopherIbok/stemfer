@@ -24,6 +24,11 @@ export async function handleTransferJob(job: TransferJob, env: Env): Promise<voi
     recipientEmail, senderEmail, message, expiresAt,
   } = job;
 
+  /* Reset to processing so retries don't get stuck on a prior 'failed' status */
+  await env.DB.prepare(
+    `UPDATE transfers SET status = 'processing', error = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('processing', 'failed')`
+  ).bind(transferId).run().catch(() => {});
+
   try {
     /* 1. Collect files */
     const files = await env.DB.prepare(
@@ -37,13 +42,14 @@ export async function handleTransferJob(job: TransferJob, env: Env): Promise<voi
     }
 
     /* 2. Build ZIP */
-    const zipBytes = await buildZip(
+    const { stream: zipStream } = await buildZip(
       files.results.map(f => ({ name: f.original_name, r2Key: f.r2_key })),
       env
     );
 
-    /* 3. Upload ZIP to R2 */
+    /* 3. Upload ZIP to R2 — collect into buffer then put */
     const zipKey = `transfers/${transferId}/transfer.zip`;
+    const zipBytes = await streamToArrayBuffer(zipStream);
     await env.FILES.put(zipKey, zipBytes, {
       httpMetadata:   { contentType: 'application/zip' },
       customMetadata: { transferId },
@@ -407,63 +413,128 @@ function escHtml(s: string): string {
 }
 
 /* ── ZIP builder ──────────────────────────────────────────────────────────
-   Minimal streaming ZIP writer — no npm dependencies.
-   Supports files up to 4 GB. Stores without compression (method 0).
+   True streaming ZIP — uses data descriptor records (flag 0x08) so CRC
+   and sizes are written *after* each file's data. Only one chunk is in
+   memory at a time; the full ZIP streams from R2 → TransformStream → R2.
+   Stores without compression (method 0). Supports files up to 4 GB.
 ─────────────────────────────────────────────────────────────────────── */
-async function buildZip(
-  entries: { name: string; r2Key: string }[],
-  env: Env,
-): Promise<ArrayBuffer> {
-  const parts:      Uint8Array[] = [];
-  const centralDir: Uint8Array[] = [];
-  let offset = 0;
-
-  for (const entry of entries) {
-    const obj = await env.FILES.get(entry.r2Key);
-    if (!obj) continue;
-
-    const data        = new Uint8Array(await obj.arrayBuffer());
-    const name        = new TextEncoder().encode(entry.name);
-    const crc         = crc32(data);
-    const localHeader = makeLocalHeader(name, data.byteLength, crc);
-    const cdEntry     = makeCentralDirEntry(name, data.byteLength, crc, offset);
-
-    parts.push(localHeader, data);
-    centralDir.push(cdEntry);
-    offset += localHeader.byteLength + data.byteLength;
+async function streamToArrayBuffer(stream: ReadableStream): Promise<ArrayBuffer> {
+  const chunks: Uint8Array[] = [];
+  const reader = stream.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
   }
-
-  const cdOffset = offset;
-  const cdSize   = centralDir.reduce((s, b) => s + b.byteLength, 0);
-  const eocd     = makeEOCD(centralDir.length, cdSize, cdOffset);
-
-  const all   = [...parts, ...centralDir, eocd];
-  const total = all.reduce((s, b) => s + b.byteLength, 0);
-  const out   = new Uint8Array(total);
+  const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+  const out = new Uint8Array(total);
   let pos = 0;
-  for (const b of all) { out.set(b, pos); pos += b.byteLength; }
-
+  for (const c of chunks) { out.set(c, pos); pos += c.byteLength; }
   return out.buffer;
 }
 
-function makeLocalHeader(name: Uint8Array, size: number, crc: number): Uint8Array {
+async function buildZip(
+  entries: { name: string; r2Key: string }[],
+  env: Env,
+): Promise<{ stream: ReadableStream }> {
+  /* Resolve which entries exist */
+  const resolved: { name: Uint8Array; r2Key: string; size: number }[] = [];
+  for (const entry of entries) {
+    const head = await env.FILES.head(entry.r2Key);
+    if (!head) continue;
+    resolved.push({ name: new TextEncoder().encode(entry.name), r2Key: entry.r2Key, size: head.size });
+  }
+
+  /* Track local-header offsets for the central directory */
+  let offset = 0;
+  const offsets: number[] = [];
+  for (const e of resolved) {
+    offsets.push(offset);
+    offset += 30 + e.name.byteLength + e.size + 16;
+  }
+
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  (async () => {
+    const crcs: number[]    = [];
+    const sizes: number[]   = [];
+
+    for (let i = 0; i < resolved.length; i++) {
+      const e = resolved[i];
+      /* Local file header — sizes/crc are 0; data descriptor follows */
+      await writer.write(makeLocalHeaderStreaming(e.name));
+
+      const obj = await env.FILES.get(e.r2Key);
+      if (!obj) {
+        crcs.push(0); sizes.push(0);
+        continue;
+      }
+
+      let fileCrc = 0xFFFFFFFF;
+      let fileSize = 0;
+      const reader = obj.body.getReader();
+      const crcTable = getCRCTable();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (let b = 0; b < value.length; b++) {
+          fileCrc = (fileCrc >>> 8) ^ crcTable[(fileCrc ^ value[b]) & 0xFF];
+        }
+        fileSize += value.length;
+        await writer.write(value);
+      }
+      fileCrc = (fileCrc ^ 0xFFFFFFFF) >>> 0;
+      crcs.push(fileCrc);
+      sizes.push(fileSize);
+
+      /* Data descriptor: signature + crc32 + compressed size + uncompressed size */
+      await writer.write(makeDataDescriptor(fileCrc, fileSize));
+    }
+
+    /* Central directory */
+    for (let i = 0; i < resolved.length; i++) {
+      await writer.write(makeCentralDirEntry(resolved[i].name, sizes[i], crcs[i], offsets[i]));
+    }
+
+    /* End of central directory */
+    const cdSize = resolved.reduce((s, e) => s + 46 + e.name.byteLength, 0);
+    await writer.write(makeEOCD(resolved.length, cdSize, offset));
+    await writer.close();
+  })().catch(err => writer.abort(err));
+
+  return { stream: readable };
+}
+
+function makeLocalHeaderStreaming(name: Uint8Array): Uint8Array {
   const buf = new ArrayBuffer(30 + name.byteLength);
   const dv  = new DataView(buf);
   const u8  = new Uint8Array(buf);
-  dv.setUint32(0,  0x04034b50, true);
-  dv.setUint16(4,  20,         true);
-  dv.setUint16(6,  0,          true);
-  dv.setUint16(8,  0,          true);
-  dv.setUint16(10, 0,          true);
-  dv.setUint16(12, 0,          true);
-  dv.setUint32(14, crc,        true);
-  dv.setUint32(18, size,       true);
-  dv.setUint32(22, size,       true);
+  dv.setUint32(0,  0x04034b50, true); /* signature */
+  dv.setUint16(4,  20,         true); /* version needed */
+  dv.setUint16(6,  0x08,       true); /* general purpose bit flag: data descriptor */
+  dv.setUint16(8,  0,          true); /* compression: store */
+  dv.setUint16(10, 0,          true); /* mod time */
+  dv.setUint16(12, 0,          true); /* mod date */
+  dv.setUint32(14, 0,          true); /* crc32 — filled in data descriptor */
+  dv.setUint32(18, 0,          true); /* compressed size — filled in data descriptor */
+  dv.setUint32(22, 0,          true); /* uncompressed size — filled in data descriptor */
   dv.setUint16(26, name.byteLength, true);
-  dv.setUint16(28, 0,          true);
+  dv.setUint16(28, 0,          true); /* extra field length */
   u8.set(name, 30);
   return u8;
 }
+
+function makeDataDescriptor(crc: number, size: number): Uint8Array {
+  const buf = new ArrayBuffer(16);
+  const dv  = new DataView(buf);
+  dv.setUint32(0, 0x08074b50, true); /* optional signature */
+  dv.setUint32(4, crc,        true);
+  dv.setUint32(8, size,       true); /* compressed */
+  dv.setUint32(12, size,      true); /* uncompressed */
+  return new Uint8Array(buf);
+}
+
 
 function makeCentralDirEntry(name: Uint8Array, size: number, crc: number, localOffset: number): Uint8Array {
   const buf = new ArrayBuffer(46 + name.byteLength);
@@ -502,15 +573,6 @@ function makeEOCD(count: number, cdSize: number, cdOffset: number): Uint8Array {
   dv.setUint32(16, cdOffset,   true);
   dv.setUint16(20, 0,          true);
   return new Uint8Array(buf);
-}
-
-function crc32(data: Uint8Array): number {
-  let crc = 0xFFFFFFFF;
-  const t = getCRCTable();
-  for (let i = 0; i < data.length; i++) {
-    crc = (crc >>> 8) ^ t[(crc ^ data[i]) & 0xFF];
-  }
-  return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
 let _crcTable: Uint32Array | null = null;

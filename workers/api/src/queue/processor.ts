@@ -17,10 +17,9 @@ async function processMessage(body: any, env: Env): Promise<void> {
     case 'process_file':   return processFile(body.fileId, env);
     case 'delete_file':    return deleteFile(body.r2Key, body.fileId, env);
     case 'stem_extract':   return stemExtract(body.fileId, body.conversionId, env);
-    case 'transfer_send': {
-      const { handleTransferJob } = await import('./transfer-processor');
-      return handleTransferJob(body, env);
-    }
+    case 'transfer_send':
+      console.warn('[queue] transfer_send is no longer handled via queue — transfers are now processed synchronously');
+      break;
     default:
       console.warn('Unknown queue message type:', body.type);
   }

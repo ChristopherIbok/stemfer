@@ -5,7 +5,7 @@ import { useDropzone } from 'react-dropzone';
 import { useQuery } from '@tanstack/react-query';
 import {
   Upload, X, CheckCircle2, AlertCircle, Music, File as FileIcon,
-  ArrowRight, Send, Clock, Zap, Download, Link as LinkIcon,
+  ArrowRight, Send, Clock, Download, Link as LinkIcon,
   ChevronDown, ChevronUp, Users,
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
@@ -52,9 +52,8 @@ interface DownloadEvent {
 }
 
 /* ── Upload store hook ────────────────────────────────────────────── */
-function useTransfer() {
+function useTransfer(senderEmail: string) {
   const [files,          setFiles]          = useState<FileEntry[]>([]);
-  const [senderEmail,    setSenderEmail]    = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [message,        setMessage]        = useState('');
   const [transferId,     setTransferId]     = useState<string | null>(null);
@@ -175,7 +174,7 @@ function useTransfer() {
   }
 
   const send = useCallback(async () => {
-    if (!senderEmail || !recipientEmail || files.length === 0) return;
+    if (!recipientEmail || files.length === 0) return;
     setGlobalError('');
     setPhase('uploading');
 
@@ -206,7 +205,6 @@ function useTransfer() {
 
   const reset = useCallback(() => {
     setFiles([]);
-    setSenderEmail('');
     setRecipientEmail('');
     setMessage('');
     setTransferId(null);
@@ -216,12 +214,11 @@ function useTransfer() {
     setSpeed('');
   }, []);
 
-  const totalSize   = files.reduce((s, f) => s + f.file.size, 0);
-  const canSend     = !!(senderEmail && recipientEmail && files.length > 0 && phase === 'idle');
+  const totalSize  = files.reduce((s, f) => s + f.file.size, 0);
+  const canSend    = !!(recipientEmail && files.length > 0 && phase === 'idle');
 
   return {
     files, addFiles, removeFile,
-    senderEmail, setSenderEmail,
     recipientEmail, setRecipientEmail,
     message, setMessage,
     phase, send, reset,
@@ -233,7 +230,10 @@ function useTransfer() {
 
 /* ── Page ───────────────────────────────────────────────────────────── */
 export default function TransferPage() {
-  const t = useTransfer();
+  const user = useAuthStore(s => s.user);
+  const senderEmail = user?.email ?? '';
+
+  const t = useTransfer(senderEmail);
   const [cardOpen, setCardOpen] = useState(false);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -251,16 +251,15 @@ export default function TransferPage() {
     }
   };
 
-  const isUploading    = t.phase === 'uploading' || t.phase === 'sending';
+  const isUploading     = t.phase === 'uploading' || t.phase === 'sending';
   const overallProgress = t.files.length > 0
     ? Math.round(t.files.reduce((s, f) => s + f.progress, 0) / t.files.length)
     : 0;
 
   return (
-    /* Outer drop target — drag anywhere on the page to start */
     <div
       {...getRootProps()}
-      className={`min-h-[calc(100vh-56px)] flex flex-col relative transition-colors ${
+      className={`min-h-[calc(100vh-56px)] flex flex-col relative transition-colors overflow-x-hidden ${
         isDragActive ? 'bg-brand-green-500/5' : ''
       }`}
       style={{ transitionDuration: 'var(--duration-base)' }}
@@ -280,53 +279,22 @@ export default function TransferPage() {
       )}
 
       {/* ── Hero ────────────────────────────────────────────────────── */}
-      <section className="flex-1 flex flex-col items-center justify-center px-6 py-24 text-center">
-        <div className="max-w-2xl mx-auto animate-fade-in">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-green-500/10 border border-brand-green-500/30 text-brand-green-400 text-xs mb-8">
-            <Zap size={12} />
-            No account needed to download
-          </div>
-
-          {/* Headline */}
-          <h1 className="text-4xl sm:text-5xl font-bold text-white leading-tight mb-5">
-            Send audio files<br />
-            <span className="text-brand-green-400">to anyone, instantly.</span>
+      <section className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center">
+        <div className="max-w-lg mx-auto animate-fade-in">
+          <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-3">
+            Send files to anyone
           </h1>
-
-          <p className="text-zinc-400 text-base sm:text-lg mb-10 max-w-lg mx-auto">
-            Drop your stems, sessions, or mixes — we'll package them up and email a download link. Files expire in 14 days.
+          <p className="text-zinc-400 text-sm sm:text-base mb-8 max-w-sm mx-auto">
+            Drop stems, sessions, or mixes — we'll package and email a download link. Expires in 14 days.
           </p>
-
-          {/* CTA */}
           <button
             onClick={openCard}
-            className="btn-primary text-base px-8 py-3 mb-12"
+            className="btn-primary text-base px-8 py-3"
           >
             <Upload size={17} />
             Send files
             <ArrowRight size={16} />
           </button>
-
-          {/* Feature pills */}
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {[
-              { icon: Zap,   label: 'Fast upload',    sub: 'Parallel chunks' },
-              { icon: Clock, label: '14-day link',    sub: 'Auto-expires'    },
-              { icon: Send,  label: 'Email delivery', sub: 'Instant notify'  },
-            ].map(({ icon: Icon, label, sub }) => (
-              <div
-                key={label}
-                className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-surface-100 border border-surface-300"
-              >
-                <Icon size={14} className="text-brand-green-400 flex-shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-medium text-white leading-none mb-0.5">{label}</p>
-                  <p className="text-[10px] text-zinc-600 leading-none">{sub}</p>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -424,30 +392,25 @@ export default function TransferPage() {
                     </div>
                   )}
 
-                  {/* Delivery form */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="label">Your email</label>
-                      <input
-                        type="email"
-                        value={t.senderEmail}
-                        onChange={e => t.setSenderEmail(e.target.value)}
-                        className="input"
-                        placeholder="you@example.com"
-                        disabled={isUploading}
-                      />
+                  {/* From field — read-only, shown only when authenticated */}
+                  {senderEmail && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-200 border border-surface-300">
+                      <span className="text-[10px] text-zinc-600 uppercase tracking-widest flex-shrink-0">From</span>
+                      <span className="text-xs text-zinc-400 truncate">{senderEmail}</span>
                     </div>
-                    <div>
-                      <label className="label">Recipient email</label>
-                      <input
-                        type="email"
-                        value={t.recipientEmail}
-                        onChange={e => t.setRecipientEmail(e.target.value)}
-                        className="input"
-                        placeholder="them@example.com"
-                        disabled={isUploading}
-                      />
-                    </div>
+                  )}
+
+                  {/* Recipient */}
+                  <div>
+                    <label className="label">Recipient email</label>
+                    <input
+                      type="email"
+                      value={t.recipientEmail}
+                      onChange={e => t.setRecipientEmail(e.target.value)}
+                      className="input"
+                      placeholder="them@example.com"
+                      disabled={isUploading}
+                    />
                   </div>
 
                   <div>
@@ -486,7 +449,7 @@ export default function TransferPage() {
                   </button>
 
                   <p className="text-[10px] text-zinc-700 text-center">
-                    Encrypted in transit · auto-deleted after 14 days · no account needed
+                    Encrypted in transit · auto-deleted after 14 days
                   </p>
                 </div>
               </>
@@ -600,16 +563,11 @@ function FileRow({
 
 /* ── My Transfers section ────────────────────────────────────────────── */
 function MyTransfers() {
-  const token = useAuthStore(s => s.token);
-
   const { data: transfers = [], isLoading } = useQuery<MyTransfer[]>({
     queryKey: ['my-transfers'],
     queryFn:  () => api.get('/transfer/my'),
-    enabled:  !!token,
     staleTime: 30_000,
   });
-
-  if (!token) return null;
 
   return (
     <section className="px-6 pb-16 max-w-3xl mx-auto w-full">
@@ -658,7 +616,7 @@ function TransferRow({ transfer: t }: { transfer: MyTransfer }) {
   const extraFiles = (t.file_count ?? 0) - fileList.length;
 
   const isExpired  = new Date(t.expires_at) < new Date();
-  const isPending  = t.status === 'processing' || t.status === 'uploading';
+  const isPending  = t.status === 'uploading';
   const isFailed   = t.status === 'failed';
 
   const copyLink = () => {

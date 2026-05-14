@@ -1,10 +1,20 @@
 'use client';
-import Link   from 'next/link';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 import { Music2 } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'https://stemfer-api.ibokchris.workers.dev';
 
-export default function LoginPage() {
+function LoginPageInner() {
+  const searchParams = useSearchParams();
+  const redirect = searchParams.get('redirect') ?? '/projects';
+
+  const handleGoogleLogin = () => {
+    localStorage.setItem('auth_redirect', redirect);
+    window.location.href = `${API_URL}/auth/google`;
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-surface px-4">
       <div className="w-full max-w-sm animate-fade-in">
@@ -22,10 +32,7 @@ export default function LoginPage() {
           {/* Google OAuth */}
           <button
             type="button"
-            onClick={() => {
-              /* Navigate directly to Worker which handles the OAuth redirect */
-              window.location.href = `${API_URL}/auth/google`;
-            }}
+            onClick={handleGoogleLogin}
             className="btn-secondary w-full justify-center gap-3 h-11"
           >
             <GoogleIcon />
@@ -57,6 +64,18 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-surface">
+        <Music2 size={36} className="text-brand-green-400 animate-pulse" />
+      </div>
+    }>
+      <LoginPageInner />
+    </Suspense>
   );
 }
 

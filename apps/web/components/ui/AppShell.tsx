@@ -4,21 +4,21 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/useAuthStore';
 import { AuthGuard } from './AuthGuard';
 import {
-  LayoutDashboard, FolderOpen, Upload,
+  FolderOpen, Upload,
   Music2, LogOut, User, HardDrive, Send,
 } from 'lucide-react';
 
 const NAV = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/projects',  label: 'Projects',  icon: FolderOpen },
-  { href: '/transfer',  label: 'Transfer',  icon: Send },
-  { href: '/upload',    label: 'Upload',    icon: Upload },
+  { href: '/projects', label: 'Projects', icon: FolderOpen },
+  { href: '/transfer', label: 'Transfer', icon: Send },
+  { href: '/upload',   label: 'Upload',   icon: Upload },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router   = useRouter();
+  const pathname   = usePathname();
+  const router     = useRouter();
   const { user, logout } = useAuthStore();
+  const isTimeline = pathname.endsWith('/timeline');
 
   const handleLogout = () => {
     logout();
@@ -36,14 +36,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGuard>
-      <div className="flex h-screen overflow-hidden bg-surface">
+      <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-surface">
+
+        {/* ── Mobile top header ─────────────────────────────────────────── */}
+        <header className="md:hidden flex items-center justify-between px-4 border-b border-surface-300 bg-surface-100 flex-shrink-0" style={{ height: 52 }}>
+          <Link href="/" className="text-base font-bold text-brand-green-400 tracking-tight flex items-center gap-2">
+            <Music2 size={16} />
+            Stemfer
+          </Link>
+          <div className="flex items-center gap-3">
+            {user && (
+              <span className="text-xs text-zinc-500">{user.name?.split(' ')[0]}</span>
+            )}
+            <button
+              onClick={handleLogout}
+              className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
+        </header>
 
         {/* ── Desktop sidebar ───────────────────────────────────────────── */}
         <aside className="hidden md:flex w-56 flex-shrink-0 border-r border-surface-300 bg-surface-100 flex-col">
           {/* Logo */}
           <div className="h-14 flex items-center px-5 border-b border-surface-300 flex-shrink-0">
             <Link
-              href="/dashboard"
+              href="/"
               className="text-lg font-bold text-brand-green-400 tracking-tight flex items-center gap-2 hover:text-brand-green-300 transition-colors"
             >
               <Music2 size={18} />
@@ -112,19 +131,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* ── Main content ──────────────────────────────────────────────── */}
-        <main className="flex-1 overflow-auto min-w-0 pb-16 md:pb-0">
-          {children}
+        <main className={`flex-1 min-w-0 flex flex-col ${isTimeline ? 'overflow-hidden' : 'overflow-auto'}`}>
+          {/* Extra bottom padding on mobile so content clears the tab bar */}
+          <div className={`flex-1 min-h-0 md:pb-0 ${isTimeline ? 'overflow-hidden flex flex-col' : 'pb-20'}`}>
+            {children}
+          </div>
         </main>
 
         {/* ── Mobile bottom tab bar ─────────────────────────────────────── */}
-        <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-surface-100 border-t border-surface-300 flex items-stretch h-16">
+        <nav
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-surface-100 border-t border-surface-300 flex items-stretch"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)', minHeight: 56 }}
+        >
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
                 key={href}
                 href={href}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 text-[10px] transition-colors ${
+                className={`flex-1 flex flex-col items-center justify-center gap-1 pt-2 pb-1 text-[10px] transition-colors ${
                   active ? 'text-brand-green-400' : 'text-zinc-500'
                 }`}
               >
