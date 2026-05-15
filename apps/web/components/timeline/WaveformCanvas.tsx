@@ -7,6 +7,7 @@ interface Props {
   width:  number;
   height: number;
   color?: string;
+  gain?:  number;
 }
 
 export const WaveformCanvas = memo(function WaveformCanvas({
@@ -14,6 +15,7 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   width,
   height,
   color = '#22c55e',
+  gain  = 1.0,
 }: Props) {
   const ref          = useRef<HTMLCanvasElement>(null);
   const prevDrawKey  = useRef('');
@@ -22,8 +24,8 @@ export const WaveformCanvas = memo(function WaveformCanvas({
     const canvas = ref.current;
     if (!canvas || !peaks.length || width <= 0 || height <= 0) return;
 
-    /* Skip if nothing meaningful changed (same peaks/size/color) */
-    const drawKey = `${peaks.length}:${width}:${height}:${color}`;
+    /* Skip if nothing meaningful changed (same peaks/size/color/gain) */
+    const drawKey = `${peaks.length}:${width}:${height}:${color}:${gain.toFixed(2)}`;
     if (drawKey === prevDrawKey.current) return;
     prevDrawKey.current = drawKey;
 
@@ -53,7 +55,7 @@ export const WaveformCanvas = memo(function WaveformCanvas({
     ctx.beginPath();
     peaks.forEach((peak, i) => {
       const x = i * barW;
-      const h = Math.max(1, peak * mid);
+      const h = Math.max(1, Math.min(peak * gain, 1.0) * mid);
       ctx.rect(x, mid - h, Math.max(1, barW - 0.5), h * 2);
     });
     ctx.fill();
@@ -65,7 +67,7 @@ export const WaveformCanvas = memo(function WaveformCanvas({
     ctx.moveTo(0, mid);
     ctx.lineTo(width, mid);
     ctx.stroke();
-  }, [peaks, width, height, color]);
+  }, [peaks, width, height, color, gain]);
 
   return (
     <canvas
@@ -77,8 +79,9 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   );
 }, (prev, next) =>
   /* Custom comparison — avoid re-render if peaks reference didn't change */
-  prev.peaks === next.peaks &&
-  prev.width === next.width &&
+  prev.peaks  === next.peaks &&
+  prev.width  === next.width &&
   prev.height === next.height &&
-  prev.color === next.color
+  prev.color  === next.color &&
+  prev.gain   === next.gain
 );

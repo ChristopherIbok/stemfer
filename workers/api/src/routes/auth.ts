@@ -5,7 +5,8 @@ import type { Env } from '../types/env';
 
 export const authRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/auth' });
 
-const GOOGLE_REDIRECT_URI = 'https://stemfer.com/auth/google-callback';
+const GOOGLE_REDIRECT_URI = (env: Env) =>
+  (env as any).GOOGLE_REDIRECT_URI ?? 'https://stemfer.com/auth/google-callback';
 const ADMIN_EMAIL         = 'ibokchris@gmail.com';
 
 // GET /auth/me
@@ -29,7 +30,7 @@ authRoutes.get('/me', async (req, env) => {
 authRoutes.get('/google', async (req, env) => {
   const params = new URLSearchParams({
     client_id:     env.GOOGLE_CLIENT_ID,
-    redirect_uri:  GOOGLE_REDIRECT_URI,
+    redirect_uri:  GOOGLE_REDIRECT_URI(env),
     response_type: 'code',
     scope:         'email profile',
     access_type:   'offline',
@@ -51,7 +52,7 @@ authRoutes.post('/oauth/google', async (req, env) => {
       code,
       client_id:     env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri:  GOOGLE_REDIRECT_URI,
+      redirect_uri:  GOOGLE_REDIRECT_URI(env),
       grant_type:    'authorization_code',
     }),
   });

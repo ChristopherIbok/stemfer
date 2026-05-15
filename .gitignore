@@ -16,6 +16,7 @@ out/
 # Cloudflare / Wrangler
 .wrangler/
 wrangler.toml.local
+.dev.vars
 
 # OS
 .DS_Store

@@ -110,6 +110,17 @@ export function useDAWShortcuts(
           }
           break;
 
+        /* ── Tool modes ─────────────────────────────────────────── */
+        case 'KeyV':
+          if (!meta) { e.preventDefault(); s.setToolMode('pointer'); }
+          break;
+        case 'KeyB':
+          if (!meta) { e.preventDefault(); s.setToolMode('razor'); }
+          break;
+        case 'KeyH':
+          if (!meta) { e.preventDefault(); s.setToolMode('hand'); }
+          break;
+
         /* ── View ───────────────────────────────────────────────── */
         case 'KeyA':
           if (meta) {

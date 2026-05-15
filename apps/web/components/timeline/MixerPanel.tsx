@@ -1,8 +1,9 @@
 'use client';
 
-import { memo, useRef, useCallback } from 'react';
+import { memo, useRef, useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useTimelineStore, TrackState } from '@/store/useTimelineStore';
+import { AudioEngine } from '@/lib/audio/audioEngine';
 
 export const MixerPanel = memo(function MixerPanel() {
   const {
@@ -117,7 +118,7 @@ const ChannelStrip = memo(function ChannelStrip({
       />
 
       {/* Level meter */}
-      <LevelMeter active={!track.muted && !(hasSolo && !track.soloed)} color={track.color} />
+      <LevelMeter trackId={track.id} active={!track.muted && !(hasSolo && !track.soloed)} color={track.color} />
 
       {/* Volume readout */}
       <span className="text-[8px] text-zinc-600 tabular-nums mt-0.5">
@@ -138,7 +139,7 @@ function MasterStrip() {
       <PanKnob value={0} onChange={() => {}} color="#6b7280" disabled />
       <div className="flex gap-0.5 mt-1" style={{ height: 16 }} />
       <VerticalFader value={1} onChange={() => {}} color="#6b7280" />
-      <LevelMeter active color="#6b7280" />
+      <LevelMeter trackId={-1} active color="#6b7280" />
       <span className="text-[8px] text-zinc-600 tabular-nums mt-0.5">100</span>
     </div>
   );
@@ -265,30 +266,42 @@ function VerticalFader({
   );
 }
 
-/* ── Level meter ────────────────────────────────────────────────────── */
-function LevelMeter({ active, color }: { active: boolean; color: string }) {
-  /* Decorative static meter — real metering needs Web Audio AnalyserNode */
+/* ── Live level meter ───────────────────────────────────────────────── */
+function LevelMeter({ trackId, active, color }: { trackId: number; active: boolean; color: string }) {
+  const [level, setLevel] = useState(0);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!active) { setLevel(0); return; }
+    const engine = AudioEngine.getInstance();
+    const tick = () => {
+      setLevel(engine.getTrackLevel(trackId));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [trackId, active]);
+
   const bars = 8;
   return (
     <div className="flex gap-px mt-1 items-end" style={{ height: 20 }}>
       {Array.from({ length: bars }).map((_, i) => {
-        const pct   = i / (bars - 1);
-        const lit   = active && pct < 0.65;
-        const warn  = active && pct >= 0.65 && pct < 0.85;
-        const clip  = active && pct >= 0.85;
+        const threshold = (i + 1) / bars;
+        const lit  = active && level >= threshold * 0.4;
+        const warn = lit && threshold > 0.65;
+        const clipping = lit && threshold > 0.9;
         return (
           <div
             key={i}
             style={{
               width:           2,
               height:          `${30 + i * 8}%`,
-              backgroundColor: clip  ? '#ef4444'
-                             : warn  ? '#f59e0b'
-                             : lit   ? color
+              backgroundColor: clipping ? '#ef4444'
+                             : warn     ? '#f59e0b'
+                             : lit      ? color
                              : 'rgba(255,255,255,0.06)',
               borderRadius:    1,
-              opacity:         active ? 0.8 : 0.2,
-              transition:      'background-color 0.1s',
+              opacity:         active ? 0.9 : 0.2,
             }}
           />
         );

@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 ENVIRONMENT = "production"
 CORS_ORIGIN = "https://stemfer.com"
 
+[env.dev.vars]
+ENVIRONMENT = "development"
+CORS_ORIGIN = "http://localhost:3000"
+GOOGLE_REDIRECT_URI = "http://localhost:3000/auth/google-callback"
+
 # Secrets — set with: wrangler secret put <NAME>
 # RESEND_API_KEY  = from resend.com dashboard (domain noreply@stemfer.com must be verified)
 

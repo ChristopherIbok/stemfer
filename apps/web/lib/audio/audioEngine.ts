@@ -14,8 +14,9 @@ import type { TimelineClip } from '@stemfer/shared/types';
 import type { TrackState } from '@/store/useTimelineStore';
 
 interface ScheduledSource {
-  fileId:  string;
-  source:  AudioBufferSourceNode;
+  fileId:   string;
+  trackId:  number;
+  source:   AudioBufferSourceNode;
   gainNode: GainNode;
   panNode:  StereoPannerNode;
 }
@@ -27,6 +28,11 @@ export class AudioEngine {
   private buffers:  Map<string, AudioBuffer> = new Map();
   private sources:  ScheduledSource[]       = [];
   private masterGain: GainNode | null       = null;
+
+  /* Per-track analysers for live metering */
+  private trackAnalysers: Map<number, AnalyserNode> = new Map();
+  private masterAnalyser: AnalyserNode | null       = null;
+
   private startContextTime = 0;
   private startMs          = 0;
 
@@ -45,9 +51,41 @@ export class AudioEngine {
       this.ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = 1;
-      this.masterGain.connect(this.ctx.destination);
+
+      /* Master analyser for master bus metering */
+      this.masterAnalyser = this.ctx.createAnalyser();
+      this.masterAnalyser.fftSize = 256;
+      this.masterAnalyser.smoothingTimeConstant = 0.8;
+      this.masterGain.connect(this.masterAnalyser);
+      this.masterAnalyser.connect(this.ctx.destination);
     }
     return this.ctx;
+  }
+
+  private getTrackAnalyser(trackId: number): AnalyserNode {
+    const ctx = this.getContext();
+    if (!this.trackAnalysers.has(trackId)) {
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      analyser.connect(this.masterGain!);
+      this.trackAnalysers.set(trackId, analyser);
+    }
+    return this.trackAnalysers.get(trackId)!;
+  }
+
+  /* Returns RMS level 0–1 for a track (or master if trackId is -1) */
+  getTrackLevel(trackId: number): number {
+    const analyser = trackId === -1 ? this.masterAnalyser : this.trackAnalysers.get(trackId);
+    if (!analyser) return 0;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.min(1, Math.sqrt(sum / data.length) * 4);
   }
 
   async resume(): Promise<void> {
@@ -119,20 +157,23 @@ export class AudioEngine {
       const bufDurationSec = (clipEndMs - Math.max(startMs, clip.offsetMs)) / 1000;
       const scheduleDelay  = Math.max(0, (clip.offsetMs - startMs) / 1000);
 
-      /* Gain node — track volume */
+      /* Gain node — track volume + clip gain */
       const gainNode = ctx.createGain();
-      gainNode.gain.value = track.volume;
+      gainNode.gain.value = track.volume * (clip.gain ?? 1.0);
 
       /* Stereo pan */
       const panNode = ctx.createStereoPanner();
       panNode.pan.value = track.pan;
+
+      /* Per-track analyser for metering */
+      const analyser = this.getTrackAnalyser(track.id);
 
       const source = ctx.createBufferSource();
       source.buffer = buf;
 
       source.connect(gainNode);
       gainNode.connect(panNode);
-      panNode.connect(this.masterGain!);
+      panNode.connect(analyser);
 
       source.start(
         this.startContextTime + scheduleDelay,
@@ -140,7 +181,7 @@ export class AudioEngine {
         bufDurationSec,
       );
 
-      this.sources.push({ fileId: clip.fileId, source, gainNode, panNode });
+      this.sources.push({ fileId: clip.fileId, trackId: track.id, source, gainNode, panNode });
     });
 
     this.startCpuMonitor();

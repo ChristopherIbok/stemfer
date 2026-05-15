@@ -11,7 +11,7 @@ import { TimelineClip as ClipType } from '@stemfer/shared/types';
 import { WaveformCanvas } from './WaveformCanvas';
 import { TimecodeInput }  from './TimecodeInput';
 import { TrackInspector, LABEL_WIDTH } from './TrackInspector';
-import { Lock, Scissors } from 'lucide-react';
+import { Lock, Scissors, Copy, Trash2, Volume2, VolumeX, SquareStack, Unlink } from 'lucide-react';
 
 export interface TimelineFileDrop {
   files: File[];
@@ -44,6 +44,7 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
     selectedClipIds, isPlaying, playheadMs,
     loopEnabled, loopStartMs, loopEndMs,
     markers, automationLanes, showAutomation,
+    toolMode,
     setZoom, setScroll, selectClip, moveClip, splitClip,
     toggleMute, toggleLock, setPlaying, setPlayhead,
     deleteClips, duplicateClips, pushHistory, addMarker,
@@ -55,6 +56,7 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
   const boxRef        = useRef<{ startX: number; startY: number } | null>(null);
   const [selectBox, setSelectBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dragOverTrack, setDragOverTrack] = useState<number | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId: string } | null>(null);
 
   const viewportWidth = useRef(1200);
 
@@ -177,11 +179,23 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
     addMarker(ms);
   }, [zoom, scrollMs, addMarker]);
 
-  /* ── Clip mouse down (move / trim) ─────────────────────────────── */
+  /* ── Clip mouse down (move / trim / razor) ─────────────────────── */
   const onClipMouseDown = useCallback((e: React.MouseEvent, clip: ClipType) => {
     if (clip.isLocked) return;
     e.preventDefault();
     e.stopPropagation();
+
+    /* Razor mode: split clip at click position */
+    const currentToolMode = useTimelineStore.getState().toolMode;
+    if (currentToolMode === 'razor') {
+      const clipEl   = e.currentTarget as HTMLElement;
+      const clipRect = clipEl.getBoundingClientRect();
+      const relX     = e.clientX - clipRect.left;
+      const atMs     = clip.offsetMs + pxToMs(relX, zoom);
+      pushHistory();
+      splitClip(clip.fileId, atMs);
+      return;
+    }
 
     /* Determine trim vs move from cursor position within clip */
     const clipEl  = e.currentTarget as HTMLElement;
@@ -260,11 +274,41 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [zoom, totalTracks, trackTops, selectedClipIds, moveClip, selectClip, pushHistory]);
+  }, [zoom, totalTracks, trackTops, selectedClipIds, moveClip, selectClip, splitClip, pushHistory]);
 
-  /* ── Canvas area mouse down → selection box ────────────────────── */
+  /* ── Clip right-click context menu ────────────────────────────────── */
+  const onClipContextMenu = useCallback((e: React.MouseEvent, clip: ClipType) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectClip(clip.fileId);
+    setCtxMenu({ x: e.clientX, y: e.clientY, fileId: clip.fileId });
+  }, [selectClip]);
+
+  /* ── Canvas area mouse down → selection box or hand scroll ─────── */
   const onCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
+
+    /* Hand mode: drag to pan the timeline */
+    const currentToolMode = useTimelineStore.getState().toolMode;
+    if (currentToolMode === 'hand') {
+      e.preventDefault();
+      const startX   = e.clientX;
+      const startScroll = scrollRef.current?.scrollLeft ?? 0;
+
+      const onMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const el = scrollRef.current;
+        if (el) el.scrollLeft = Math.max(0, startScroll - dx);
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      return;
+    }
+
     selectClip(null);
 
     const rect   = e.currentTarget.getBoundingClientRect();
@@ -352,8 +396,10 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
     setDragOverTrack(null);
     if (!onFileDrop) return;
     const files = Array.from(e.dataTransfer.files).filter(f =>
-      /\.(wav|mp3|aiff|aif|flac|ogg|m4a|opus|webm|als|logicx|song|ptx|rpp)$/i.test(f.name) ||
-      f.type.startsWith('audio/')
+      /* Accept any audio MIME type */
+      f.type.startsWith('audio/') ||
+      /* Accept all common + DAW-native formats by extension */
+      /\.(wav|bwf|wave|mp3|mp2|aiff|aif|aifc|flac|ogg|oga|opus|m4a|m4b|aac|wma|caf|rf64|w64|sd2|au|snd|amr|webm|mka|dsd|dsf|dff|mp4|mov|als|alp|logicx|ptx|pts|ptf|rpp|rpp-bak|song|band|nks|nkx|reason|cmb|cpr|npr|vpr|sesx|omf|aaf)$/i.test(f.name)
     );
     if (!files.length) return;
     const rect = scrollRef.current!.getBoundingClientRect();
@@ -472,7 +518,11 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
 
           {/* ── Track area ───────────────────────────────────────── */}
           <div
-            style={{ position: 'relative', height: totalHeight }}
+            style={{
+              position: 'relative',
+              height: totalHeight,
+              cursor: toolMode === 'razor' ? 'crosshair' : toolMode === 'hand' ? 'grab' : 'default',
+            }}
             onMouseDown={onCanvasMouseDown}
             onDragOver={onTrackDragOver}
             onDragLeave={onTrackDragLeave}
@@ -532,7 +582,9 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
                   trackTop={trackTops[clip.track] ?? 0}
                   trackHeight={trackH}
                   trackColor={tracks[clip.track]?.color}
+                  toolMode={toolMode}
                   onMouseDown={onClipMouseDown}
+                  onContextMenu={onClipContextMenu}
                 />
               );
             })}
@@ -583,6 +635,16 @@ export function TimelineEngine({ onFileDrop }: { onFileDrop?: (drop: TimelineFil
 
       {/* ── Right panel: Clip inspector ───────────────────────────── */}
       <ClipInspectorPanel />
+
+      {/* ── Clip context menu ─────────────────────────────────────── */}
+      {ctxMenu && (
+        <ClipContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          fileId={ctxMenu.fileId}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -617,16 +679,18 @@ const RulerTick = memo(function RulerTick({
 
 /* ── Clip block ─────────────────────────────────────────────────────── */
 const TimelineClipBlock = memo(function TimelineClipBlock({
-  clip, zoom, scrollMs, selected, trackTop, trackHeight, trackColor, onMouseDown,
+  clip, zoom, scrollMs, selected, trackTop, trackHeight, trackColor, toolMode, onMouseDown, onContextMenu,
 }: {
-  clip:        ClipType;
-  zoom:        number;
-  scrollMs:    number;
-  selected:    boolean;
-  trackTop:    number;
-  trackHeight: number;
-  trackColor?: string;
-  onMouseDown: (e: React.MouseEvent, clip: ClipType) => void;
+  clip:           ClipType;
+  zoom:           number;
+  scrollMs:       number;
+  selected:       boolean;
+  trackTop:       number;
+  trackHeight:    number;
+  trackColor?:    string;
+  toolMode:       'pointer' | 'razor' | 'hand';
+  onMouseDown:    (e: React.MouseEvent, clip: ClipType) => void;
+  onContextMenu:  (e: React.MouseEvent, clip: ClipType) => void;
 }) {
   const left  = msToPx(clip.offsetMs - scrollMs, zoom);
   const width = Math.max(MIN_CLIP_WIDTH, msToPx(clip.durationMs, zoom));
@@ -634,13 +698,25 @@ const TimelineClipBlock = memo(function TimelineClipBlock({
 
   const PAD = 4;
 
+  const clipCursor = clip.isLocked
+    ? 'cursor-not-allowed'
+    : toolMode === 'razor'
+    ? 'cursor-crosshair'
+    : toolMode === 'hand'
+    ? 'cursor-grab active:cursor-grabbing'
+    : 'cursor-grab active:cursor-grabbing';
+
+  /* Fade overlay widths in px */
+  const fadeInPx  = clip.fadeInMs  ? Math.min(msToPx(clip.fadeInMs,  zoom), width * 0.5) : 0;
+  const fadeOutPx = clip.fadeOutMs ? Math.min(msToPx(clip.fadeOutMs, zoom), width * 0.5) : 0;
+
   return (
     <div
       className={[
         'timeline-clip group',
         clip.isMuted  ? 'timeline-clip--muted'   : '',
         selected      ? 'timeline-clip--selected' : '',
-        clip.isLocked ? 'cursor-not-allowed'       : 'cursor-grab active:cursor-grabbing',
+        clipCursor,
       ].filter(Boolean).join(' ')}
       style={{
         left:            Math.max(0, left),
@@ -654,23 +730,52 @@ const TimelineClipBlock = memo(function TimelineClipBlock({
         boxShadow:       selected ? `0 0 0 1px #ffffff22 inset, 0 0 6px ${color}20` : undefined,
       }}
       onMouseDown={e => onMouseDown(e, clip)}
+      onContextMenu={e => onContextMenu(e, clip)}
     >
-      {/* Left trim handle */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100"
-        style={{ backgroundColor: `${color}40`, borderRadius: '3px 0 0 3px' }}
-      />
+      {/* Left trim handle (hidden in razor/hand mode) */}
+      {toolMode === 'pointer' && (
+        <div
+          className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100"
+          style={{ backgroundColor: `${color}40`, borderRadius: '3px 0 0 3px' }}
+        />
+      )}
       {/* Right trim handle */}
-      <div
-        className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100"
-        style={{ backgroundColor: `${color}40`, borderRadius: '0 3px 3px 0' }}
-      />
+      {toolMode === 'pointer' && (
+        <div
+          className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100"
+          style={{ backgroundColor: `${color}40`, borderRadius: '0 3px 3px 0' }}
+        />
+      )}
+
+      {/* Fade-in overlay */}
+      {fadeInPx > 0 && (
+        <div
+          className="absolute top-0 left-0 bottom-0 pointer-events-none"
+          style={{
+            width: fadeInPx,
+            background: `linear-gradient(to right, ${color}40, transparent)`,
+          }}
+        />
+      )}
+      {/* Fade-out overlay */}
+      {fadeOutPx > 0 && (
+        <div
+          className="absolute top-0 right-0 bottom-0 pointer-events-none"
+          style={{
+            width: fadeOutPx,
+            background: `linear-gradient(to left, ${color}40, transparent)`,
+          }}
+        />
+      )}
 
       {/* Header */}
       <div className="flex items-center gap-1 px-1.5 overflow-hidden" style={{ height: 18 }}>
         {clip.isLocked && <Lock size={7} className="text-zinc-500 flex-shrink-0" />}
         <span className="text-[9px] font-medium truncate leading-none" style={{ color: `${color}dd` }}>
           {clip.label}
+          {clip.gain !== undefined && clip.gain !== 1.0 && (
+            <span className="ml-1 opacity-60">{clip.gain > 1 ? '+' : ''}{((clip.gain - 1) * 6).toFixed(1)}dB</span>
+          )}
         </span>
       </div>
 
@@ -681,6 +786,7 @@ const TimelineClipBlock = memo(function TimelineClipBlock({
           width={width - 2}
           height={trackHeight - PAD * 2 - 20}
           color={clip.isMuted ? '#404040' : color}
+          gain={clip.gain ?? 1.0}
         />
       )}
     </div>
@@ -691,8 +797,65 @@ const TimelineClipBlock = memo(function TimelineClipBlock({
   prev.scrollMs   === next.scrollMs &&
   prev.selected   === next.selected &&
   prev.trackTop   === next.trackTop &&
-  prev.trackColor === next.trackColor
+  prev.trackColor === next.trackColor &&
+  prev.toolMode   === next.toolMode
 );
+
+/* ── Clip context menu ──────────────────────────────────────────────── */
+function ClipContextMenu({
+  x, y, fileId, onClose,
+}: {
+  x: number; y: number; fileId: string; onClose: () => void;
+}) {
+  const { clips, selectedClipIds, deleteClips, duplicateClips, toggleMute, toggleLock, groupClips, pushHistory } = useTimelineStore();
+  const clip = clips.find(c => c.fileId === fileId);
+
+  /* Close on outside click */
+  useEffect(() => {
+    const handler = () => onClose();
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  if (!clip) return null;
+
+  const selectedIds = [...selectedClipIds];
+  const affectedIds = selectedIds.length > 0 ? selectedIds : [fileId];
+
+  const item = (label: string, icon: React.ReactNode, action: () => void, danger = false) => (
+    <button
+      key={label}
+      onMouseDown={e => { e.stopPropagation(); action(); onClose(); }}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[11px] hover:bg-surface-300 ${danger ? 'text-red-400 hover:text-red-300' : 'text-zinc-300'}`}
+    >
+      <span className="w-3 flex-shrink-0">{icon}</span>
+      {label}
+    </button>
+  );
+
+  /* Viewport-aware position */
+  const safeX = Math.min(x, window.innerWidth  - 160);
+  const safeY = Math.min(y, window.innerHeight - 220);
+
+  return (
+    <div
+      className="fixed z-50 bg-surface-100 border border-surface-300 rounded-lg shadow-xl py-1 min-w-[150px]"
+      style={{ left: safeX, top: safeY }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      <div className="px-3 py-1 border-b border-surface-300 mb-1">
+        <p className="text-[9px] text-zinc-600 uppercase tracking-widest truncate">{clip.label}</p>
+      </div>
+      {item('Duplicate', <Copy size={10} />, () => { pushHistory(); duplicateClips(affectedIds); })}
+      {item(clip.isMuted ? 'Unmute' : 'Mute', <VolumeX size={10} />, () => toggleMute(fileId))}
+      {item(clip.isLocked ? 'Unlock' : 'Lock', <Lock size={10} />, () => toggleLock(fileId))}
+      {affectedIds.length > 1 && item('Group clips', <SquareStack size={10} />, () => { pushHistory(); groupClips(affectedIds); })}
+      {clip.groupId && item('Ungroup', <Unlink size={10} />, () => useTimelineStore.getState().ungroupClips(clip.groupId!))}
+      <div className="border-t border-surface-300 my-1" />
+      {item('Delete', <Trash2 size={10} />, () => { pushHistory(); deleteClips(affectedIds); }, true)}
+    </div>
+  );
+}
 
 /* ── Automation lane overlay ────────────────────────────────────────── */
 const AutomationLaneView = memo(function AutomationLaneView({
@@ -828,6 +991,67 @@ function ClipInspectorPanel() {
               <label className="label text-[9px]">Duration</label>
               <div className="text-xs text-zinc-400 tabular-nums">{msToTimecode(clip.durationMs)}</div>
             </div>
+
+            {/* ── Gain ──────────────────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="label text-[9px]">Gain</label>
+                <span className="text-[9px] text-zinc-500 tabular-nums">
+                  {clip.gain !== undefined ? `${((clip.gain - 1) * 6).toFixed(1)} dB` : '0.0 dB'}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.01}
+                value={clip.gain ?? 1.0}
+                onChange={e => updateClip(fileId!, { gain: parseFloat(e.target.value) })}
+                className="w-full h-1 accent-brand-green-400 cursor-pointer"
+              />
+              <div className="flex justify-between text-[8px] text-zinc-700 mt-0.5">
+                <span>-6dB</span><span>0</span><span>+6dB</span>
+              </div>
+            </div>
+
+            {/* ── Fade in ───────────────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="label text-[9px]">Fade In</label>
+                <span className="text-[9px] text-zinc-500 tabular-nums">
+                  {clip.fadeInMs ? `${(clip.fadeInMs / 1000).toFixed(2)}s` : 'Off'}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={Math.min(clip.durationMs * 0.5, 10000)}
+                step={10}
+                value={clip.fadeInMs ?? 0}
+                onChange={e => updateClip(fileId!, { fadeInMs: parseFloat(e.target.value) || undefined })}
+                className="w-full h-1 accent-brand-green-400 cursor-pointer"
+              />
+            </div>
+
+            {/* ── Fade out ──────────────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="label text-[9px]">Fade Out</label>
+                <span className="text-[9px] text-zinc-500 tabular-nums">
+                  {clip.fadeOutMs ? `${(clip.fadeOutMs / 1000).toFixed(2)}s` : 'Off'}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={Math.min(clip.durationMs * 0.5, 10000)}
+                step={10}
+                value={clip.fadeOutMs ?? 0}
+                onChange={e => updateClip(fileId!, { fadeOutMs: parseFloat(e.target.value) || undefined })}
+                className="w-full h-1 accent-brand-green-400 cursor-pointer"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-2 pt-1">
               <InfoPill label="Muted" value={clip.isMuted ? 'Yes' : 'No'} active={clip.isMuted} />
               <InfoPill label="Locked" value={clip.isLocked ? 'Yes' : 'No'} active={clip.isLocked} />

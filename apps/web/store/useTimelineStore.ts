@@ -106,6 +106,9 @@ interface TimelineState {
   automationLanes:   AutomationLane[];
   showAutomation:    boolean;
 
+  /* Tool mode */
+  toolMode:          'pointer' | 'razor' | 'hand';
+
   /* UI panels */
   showMixer:         boolean;
   showRightPanel:    boolean;
@@ -172,6 +175,7 @@ interface TimelineState {
   setShowAutomation: (v: boolean) => void;
 
   /* Actions — UI */
+  setToolMode:       (mode: 'pointer' | 'razor' | 'hand') => void;
   setShowMixer:      (v: boolean) => void;
   setShowRightPanel: (v: boolean) => void;
   setRightPanelTab:  (tab: 'inspector' | 'fx' | 'automation') => void;
@@ -217,6 +221,8 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   markers:          [],
   automationLanes:  [],
   showAutomation:   false,
+
+  toolMode:         'pointer',
 
   showMixer:        false,
   showRightPanel:   false,
@@ -488,6 +494,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   setShowAutomation(v) { set({ showAutomation: v }); },
 
   /* ── UI ────────────────────────────────────────────────────────── */
+  setToolMode(mode)     { set({ toolMode: mode }); },
   setShowMixer(v)       { set({ showMixer: v }); },
   setShowRightPanel(v)  { set({ showRightPanel: v }); },
   setRightPanelTab(tab) { set({ rightPanelTab: tab }); },

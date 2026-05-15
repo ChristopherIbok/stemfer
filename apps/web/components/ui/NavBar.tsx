@@ -15,6 +15,7 @@ export default function NavBar() {
         {/* Desktop links */}
         <div className="hidden md:flex items-center gap-4">
           <Link href="/transfer" className="text-sm text-zinc-400 hover:text-white transition-colors">Transfer</Link>
+          <Link href="/projects" className="text-sm text-zinc-400 hover:text-white transition-colors">Timeline</Link>
           <Link href="/pricing" className="text-sm text-zinc-400 hover:text-white transition-colors">Pricing</Link>
           <Link href="/auth/login" className="text-sm text-zinc-400 hover:text-white transition-colors">Sign in</Link>
           <Link href="/auth/register" className="btn-primary">Get Started</Link>
@@ -34,6 +35,7 @@ export default function NavBar() {
       {open && (
         <div className="md:hidden border-t border-surface-300 bg-surface px-6 py-4 flex flex-col gap-4">
           <Link href="/transfer" className="text-sm text-zinc-400 hover:text-white transition-colors" onClick={() => setOpen(false)}>Transfer</Link>
+          <Link href="/projects" className="text-sm text-zinc-400 hover:text-white transition-colors" onClick={() => setOpen(false)}>Timeline</Link>
           <Link href="/pricing" className="text-sm text-zinc-400 hover:text-white transition-colors" onClick={() => setOpen(false)}>Pricing</Link>
           <Link href="/auth/login" className="text-sm text-zinc-400 hover:text-white transition-colors" onClick={() => setOpen(false)}>Sign in</Link>
           <Link href="/auth/register" className="btn-primary justify-center" onClick={() => setOpen(false)}>Get Started</Link>

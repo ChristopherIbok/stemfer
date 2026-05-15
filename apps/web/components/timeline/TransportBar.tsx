@@ -5,7 +5,7 @@ import {
   SkipBack, Play, Pause, Square, Circle,
   Repeat, Music, Undo2, Redo2, Save,
   Grid3x3, ChevronDown, Cpu, Timer,
-  ZoomIn, ZoomOut,
+  ZoomIn, ZoomOut, MousePointer2, Scissors, Hand,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store/useTimelineStore';
 import { msToTimecode, msToPx, pxToMs } from '@stemfer/shared/utils/timecode';
@@ -28,11 +28,13 @@ export const TransportBar = memo(function TransportBar({
     bpm, timeSig, snapEnabled, quantizeValue,
     zoom, cpuLoad, latencyMs,
     showMixer, showRightPanel,
+    toolMode,
     setPlaying, setRecording, setPlayhead,
     setLoop, setMetronome,
     setBpm, setTimeSig, setSnap, setQuantize,
     setZoom, setScroll,
     setShowMixer, setShowRightPanel,
+    setToolMode,
     undo, redo,
   } = useTimelineStore();
 
@@ -211,6 +213,34 @@ export const TransportBar = memo(function TransportBar({
         <TBtn onClick={redo} title="Redo (⌘⇧Z)"><Redo2 size={12} /></TBtn>
       </div>
 
+      {/* ── Tool modes ────────────────────────────────────────── */}
+      <div className="flex items-center gap-0 px-2 border-r border-surface-300 mr-2 flex-shrink-0">
+        <ToolModeBtn
+          mode="pointer"
+          current={toolMode}
+          onSelect={setToolMode}
+          title="Select / Move (V)"
+        >
+          <MousePointer2 size={12} />
+        </ToolModeBtn>
+        <ToolModeBtn
+          mode="razor"
+          current={toolMode}
+          onSelect={setToolMode}
+          title="Razor / Cut (B)"
+        >
+          <Scissors size={12} />
+        </ToolModeBtn>
+        <ToolModeBtn
+          mode="hand"
+          current={toolMode}
+          onSelect={setToolMode}
+          title="Hand / Scroll (H)"
+        >
+          <Hand size={12} />
+        </ToolModeBtn>
+      </div>
+
       {/* ── Save ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-0.5 px-2 border-r border-surface-300 mr-2 flex-shrink-0">
         <button
@@ -276,6 +306,34 @@ export const TransportBar = memo(function TransportBar({
     </div>
   );
 });
+
+/* ── Tool mode button ───────────────────────────────────────────────── */
+function ToolModeBtn({
+  children, mode, current, onSelect, title,
+}: {
+  children: React.ReactNode;
+  mode: 'pointer' | 'razor' | 'hand';
+  current: 'pointer' | 'razor' | 'hand';
+  onSelect: (m: 'pointer' | 'razor' | 'hand') => void;
+  title?: string;
+}) {
+  const active = current === mode;
+  return (
+    <button
+      onClick={() => onSelect(mode)}
+      title={title}
+      className={`
+        h-7 w-7 rounded flex items-center justify-center flex-shrink-0
+        ${active
+          ? 'bg-brand-green-500/20 text-brand-green-400 ring-1 ring-brand-green-500/40'
+          : 'text-zinc-500 hover:text-white hover:bg-surface-300'}
+      `}
+      style={{ transition: 'background-color var(--duration-fast), color var(--duration-fast)' }}
+    >
+      {children}
+    </button>
+  );
+}
 
 /* ── Small toolbar button ───────────────────────────────────────────── */
 function TBtn({

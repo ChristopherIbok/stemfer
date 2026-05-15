@@ -159,6 +159,9 @@ export interface TimelineClip {
   isLocked: boolean;
   isMuted: boolean;
   groupId?: string;
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  gain?: number;  // 0–2, default 1.0
 }
 
 export interface ChunkUploadState {

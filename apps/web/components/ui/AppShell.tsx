@@ -1,24 +1,45 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { AuthGuard } from './AuthGuard';
 import {
   FolderOpen, Upload,
-  Music2, LogOut, User, HardDrive, Send,
+  Music2, LogOut, User, HardDrive, Send, Layers,
 } from 'lucide-react';
 
-const NAV = [
+const STATIC_NAV = [
   { href: '/projects', label: 'Projects', icon: FolderOpen },
   { href: '/transfer', label: 'Transfer', icon: Send },
   { href: '/upload',   label: 'Upload',   icon: Upload },
 ];
+
+const TIMELINE_KEY = 'stemfer:last-timeline';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname   = usePathname();
   const router     = useRouter();
   const { user, logout } = useAuthStore();
   const isTimeline = pathname.endsWith('/timeline');
+
+  /* Track last-visited timeline URL */
+  const [timelineHref, setTimelineHref] = useState('/projects');
+  useEffect(() => {
+    const stored = localStorage.getItem(TIMELINE_KEY);
+    if (stored) setTimelineHref(stored);
+  }, []);
+  useEffect(() => {
+    if (isTimeline) {
+      localStorage.setItem(TIMELINE_KEY, pathname);
+      setTimelineHref(pathname);
+    }
+  }, [isTimeline, pathname]);
+
+  const NAV = [
+    ...STATIC_NAV,
+    { href: timelineHref, label: 'Timeline', icon: Layers },
+  ];
 
   const handleLogout = () => {
     logout();
@@ -73,10 +94,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Nav */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
             {NAV.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || pathname.startsWith(href + '/');
+              const active = label === 'Timeline'
+                ? pathname.endsWith('/timeline')
+                : pathname === href || pathname.startsWith(href + '/');
               return (
                 <Link
-                  key={href}
+                  key={label}
                   href={href}
                   prefetch
                   className={`nav-link ${active ? 'nav-link--active' : 'nav-link--inactive'}`}
@@ -144,10 +167,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           style={{ paddingBottom: 'env(safe-area-inset-bottom)', minHeight: 56 }}
         >
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href || pathname.startsWith(href + '/');
+            const active = label === 'Timeline'
+              ? pathname.endsWith('/timeline')
+              : pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
-                key={href}
+                key={label}
                 href={href}
                 className={`flex-1 flex flex-col items-center justify-center gap-1 pt-2 pb-1 text-[10px] transition-colors ${
                   active ? 'text-brand-green-400' : 'text-zinc-500'
