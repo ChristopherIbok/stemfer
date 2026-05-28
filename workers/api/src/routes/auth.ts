@@ -1,9 +1,9 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { signToken, requireAuth } from '../lib/auth';
 import { nanoid, getUserByEmail, getSubscription, logActivity } from '../lib/db';
 import type { Env } from '../types/env';
 
-export const authRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/auth' });
+export const authRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/auth' });
 
 const GOOGLE_REDIRECT_URI = (env: Env) =>
   (env as any).GOOGLE_REDIRECT_URI ?? 'https://stemfer.com/auth/google-callback';

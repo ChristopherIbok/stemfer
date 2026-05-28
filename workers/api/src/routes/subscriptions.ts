@@ -1,4 +1,4 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid } from '../lib/db';
 import type { Env } from '../types/env';
@@ -27,7 +27,7 @@ const PLANS = {
   },
 };
 
-export const subscriptionRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/subscriptions' });
+export const subscriptionRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/subscriptions' });
 
 // GET /subscriptions/me
 subscriptionRoutes.get('/me', async (req, env) => {
@@ -45,8 +45,8 @@ subscriptionRoutes.post('/checkout', async (req, env) => {
   const { plan, successUrl, cancelUrl } = await req.json<any>();
 
   const priceIds: Record<string, string> = {
-    pro:    process.env.STRIPE_PRICE_PRO    ?? 'price_pro',
-    studio: process.env.STRIPE_PRICE_STUDIO ?? 'price_studio',
+    pro:    env.STRIPE_PRICE_PRO    ?? 'price_pro',
+    studio: env.STRIPE_PRICE_STUDIO ?? 'price_studio',
   };
 
   if (!priceIds[plan])

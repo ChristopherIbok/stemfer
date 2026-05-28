@@ -1,9 +1,9 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid, logActivity } from '../lib/db';
 import type { Env } from '../types/env';
 
-export const folderRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/folders' });
+export const folderRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/folders' });
 
 // GET /folders?projectId=&parentId=
 folderRoutes.get('/', async (req, env) => {

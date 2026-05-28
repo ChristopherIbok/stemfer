@@ -19,4 +19,6 @@ export interface Env {
   // Vars
   ENVIRONMENT: string;
   CORS_ORIGIN: string;
+  STRIPE_PRICE_PRO?: string;
+  STRIPE_PRICE_STUDIO?: string;
 }

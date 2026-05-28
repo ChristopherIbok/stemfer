@@ -1,8 +1,8 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireRole } from '../lib/auth';
 import type { Env } from '../types/env';
 
-export const adminRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/admin' });
+export const adminRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/admin' });
 
 adminRoutes.get('/stats', async (req, env) => {
   await requireRole(req, env, 'admin');

@@ -52,7 +52,7 @@ interface DownloadEvent {
 }
 
 /* ── Upload store hook ────────────────────────────────────────────── */
-function useTransfer(senderEmail: string) {
+function useTransfer(senderEmail: string, token: string | null) {
   const [files,          setFiles]          = useState<FileEntry[]>([]);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [message,        setMessage]        = useState('');
@@ -84,9 +84,12 @@ function useTransfer(senderEmail: string) {
     const snapshot = [...files];
 
     for (const entry of snapshot) {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+
       const initRes = await fetch(`${API}/transfer/init`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           transferId: tid,
           filename:   entry.file.name,
@@ -167,7 +170,7 @@ function useTransfer(senderEmail: string) {
 
       updateFile(entry.id, { status: 'done', progress: 100 });
     }
-  }, [files, senderEmail]);
+  }, [files, senderEmail, token]);
 
   function updateFile(id: string, patch: Partial<FileEntry>) {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
@@ -185,9 +188,12 @@ function useTransfer(senderEmail: string) {
       await uploadAll(tid);
 
       setPhase('sending');
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+
       const sendRes = await fetch(`${API}/transfer/send`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ transferId: tid, recipientEmail, message }),
       });
       if (!sendRes.ok) {
@@ -201,7 +207,7 @@ function useTransfer(senderEmail: string) {
       setGlobalError(err instanceof Error ? err.message : 'Transfer failed');
       setPhase('error');
     }
-  }, [senderEmail, recipientEmail, files, message, uploadAll]);
+  }, [token, recipientEmail, files, message, uploadAll]);
 
   const reset = useCallback(() => {
     setFiles([]);
@@ -231,9 +237,10 @@ function useTransfer(senderEmail: string) {
 /* ── Page ───────────────────────────────────────────────────────────── */
 export default function TransferPage() {
   const user = useAuthStore(s => s.user);
+  const token = useAuthStore(s => s.token);
   const senderEmail = user?.email ?? '';
 
-  const t = useTransfer(senderEmail);
+  const t = useTransfer(senderEmail, token);
   const [cardOpen, setCardOpen] = useState(false);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -563,11 +570,16 @@ function FileRow({
 
 /* ── My Transfers section ────────────────────────────────────────────── */
 function MyTransfers() {
+  const user = useAuthStore(s => s.user);
+
   const { data: transfers = [], isLoading } = useQuery<MyTransfer[]>({
     queryKey: ['my-transfers'],
     queryFn:  () => api.get('/transfer/my'),
+    enabled:  !!user,
     staleTime: 30_000,
   });
+
+  if (!user) return null;
 
   return (
     <section className="px-6 pb-16 max-w-3xl mx-auto w-full">

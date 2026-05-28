@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev --local --env dev",
+    "dev": "wrangler dev --local --env dev --port 8787",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types"
   },

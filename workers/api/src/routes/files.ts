@@ -1,9 +1,9 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid, logActivity } from '../lib/db';
 import type { Env } from '../types/env';
 
-export const fileRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/files' });
+export const fileRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/files' });
 
 // GET /files?projectId=&sessionId=
 fileRoutes.get('/', async (req, env) => {

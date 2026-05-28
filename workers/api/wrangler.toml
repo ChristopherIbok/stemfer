@@ -42,3 +42,23 @@ max_retries = 3
 # [[migrations]]
 # tag = "v1"
 # new_classes = ["PresenceDO"]
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "stemfer-db"
+database_id = "dd60059d-f3e5-4112-a15b-df2c754a10b7"
+
+[[env.dev.r2_buckets]]
+binding = "FILES"
+bucket_name = "stemfer-files"
+
+[[env.dev.queues.producers]]
+binding = "PROCESSING_QUEUE"
+queue = "stemfer-processing"
+
+[[env.dev.queues.consumers]]
+queue = "stemfer-processing"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+

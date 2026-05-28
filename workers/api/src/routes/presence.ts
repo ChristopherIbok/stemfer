@@ -1,8 +1,8 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import type { Env } from '../types/env';
 
-export const presenceRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/presence' });
+export const presenceRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/presence' });
 
 // GET /presence/:projectId — WebSocket upgrade for real-time presence
 presenceRoutes.get('/:projectId', async (req, env) => {

@@ -1,9 +1,9 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid } from '../lib/db';
 import type { Env } from '../types/env';
 
-export const shareRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/share' });
+export const shareRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/share' });
 
 // POST /share — create share link
 shareRoutes.post('/', async (req, env) => {

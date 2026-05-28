@@ -1,11 +1,11 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid, checkStorageLimit, logActivity } from '../lib/db';
 import type { Env } from '../types/env';
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB minimum for R2 multipart
 
-export const uploadRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/upload' });
+export const uploadRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/upload' });
 
 // POST /upload/init — start a multipart upload, get upload ID
 uploadRoutes.post('/init', async (req, env) => {

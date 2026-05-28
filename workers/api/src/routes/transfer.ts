@@ -1,5 +1,5 @@
-import { AutoRouter, json } from 'itty-router';
-import { requireAuth }      from '../lib/auth';
+import { AutoRouter, json, IRequest } from 'itty-router';
+import { requireAuth, verifyToken } from '../lib/auth';
 import { nanoid }           from '../lib/db';
 import type { Env }         from '../types/env';
 
@@ -7,7 +7,7 @@ const CHUNK_SIZE     = 5 * 1024 * 1024;  // 5 MB — R2 multipart minimum
 const EXPIRY_DAYS    = 14;
 const MAX_DOWNLOADS  = 50;
 
-export const transferRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/transfer' });
+export const transferRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/transfer' });
 
 /* ─────────────────────────────────────────────────────────────────────────
    POST /transfer/init
@@ -28,9 +28,10 @@ transferRoutes.post('/init', async (req, env) => {
   if (!filename || !size)
     throw Object.assign(new Error('Missing required fields'), { status: 400 });
 
-  const senderEmail = rawSender?.trim() || 'noreply@stemfer.com';
+  const payload = await optionalAuth(req, env);
+  const senderEmail = payload?.email ?? (rawSender?.trim() || 'noreply@stemfer.com');
 
-  if (rawSender?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail))
+  if (senderEmail !== 'noreply@stemfer.com' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail))
     throw Object.assign(new Error('Invalid sender email'), { status: 400 });
 
   const transferId = existingId ?? nanoid();
@@ -323,7 +324,7 @@ transferRoutes.get('/download/:token/file/:fileId', async (req, env) => {
    List authenticated user's recent transfers (sender).
 ───────────────────────────────────────────────────────────────────────── */
 transferRoutes.get('/my', async (req, env) => {
-  let payload: { sub: string; email: string } | null = null;
+  let payload: { sub: string; email: string };
   try {
     payload = await requireAuth(req, env) as any;
   } catch {
@@ -351,7 +352,7 @@ transferRoutes.get('/my', async (req, env) => {
    List individual download events for a transfer (sender only).
 ───────────────────────────────────────────────────────────────────────── */
 transferRoutes.get('/:id/downloads', async (req, env) => {
-  let payload: { sub: string; email: string } | null = null;
+  let payload: { sub: string; email: string };
   try {
     payload = await requireAuth(req, env) as any;
   } catch {
@@ -618,6 +619,17 @@ function escHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+async function optionalAuth(req: IRequest, env: Env) {
+  const auth = req.headers.get('Authorization') ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return null;
+  try {
+    return await verifyToken(token, env);
+  } catch {
+    return null;
+  }
 }
 
 function sanitize(name: string) {

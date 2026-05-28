@@ -1,4 +1,4 @@
-import { AutoRouter, cors, error, json } from 'itty-router';
+import { AutoRouter, cors, error, json, IRequest } from 'itty-router';
 import { authRoutes }         from './routes/auth';
 import { projectRoutes }      from './routes/projects';
 import { fileRoutes }         from './routes/files';
@@ -18,7 +18,7 @@ const { preflight, corsify } = cors({
   maxAge: 86400,
 });
 
-const router = AutoRouter<Request, [Env, ExecutionContext]>({
+const router = AutoRouter<IRequest, [Env, ExecutionContext]>({
   before: [preflight],
   finally: [corsify],
   catch: (err) => {

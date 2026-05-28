@@ -1,9 +1,9 @@
-import { AutoRouter, json } from 'itty-router';
+import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
 import { nanoid, getProject, logActivity } from '../lib/db';
 import type { Env } from '../types/env';
 
-export const projectRoutes = AutoRouter<Request, [Env, ExecutionContext]>({ base: '/projects' });
+export const projectRoutes = AutoRouter<IRequest, [Env, ExecutionContext]>({ base: '/projects' });
 
 // GET /projects
 projectRoutes.get('/', async (req, env) => {

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(vercel --prod --yes)",
+      "Bash(open \"https://web-mu-ochre-87.vercel.app/\")",
+      "Bash(open \"https://web-mu-ochre-87.vercel.app/auth/login\")",
+      "Bash(open \"https://web-mu-ochre-87.vercel.app/auth/register\")",
+      "Bash(open \"https://web-mu-ochre-87.vercel.app/dashboard\")",
+      "Bash(open \"https://web-mu-ochre-87.vercel.app/projects\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://web-mu-ochre-87.vercel.app/auth/login)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://stemfer-api.ibokchris.workers.dev/auth/google)",
+      "Bash(rm -rf .next)",
+      "Bash(pnpm build *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(npx tsc *)",
+      "Bash(wrangler tail *)",
+      "Bash(kill %1)",
+      "Bash(curl -s https://api.resend.com/emails -H 'Authorization: Bearer key-re_hbdh7Cu6_79xzY2sQG96xWmBPn7RDD9tZ' -H 'Content-Type: application/json' -d '{ *)",
+      "mcp__claude_ai_Cloudflare_Developer_Platform__search_cloudflare_documentation"
+    ]
+  }
+}
