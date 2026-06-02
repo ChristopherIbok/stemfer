@@ -1,13 +1,12 @@
 import { AutoRouter, json, IRequest } from 'itty-router';
 import { requireAuth } from '../lib/auth';
-import { nanoid } from '../lib/db';
 import type { Env } from '../types/env';
 
 const PLANS = {
   free: {
     name: 'Free',
     storage_limit_bytes: 5 * 1024 * 1024 * 1024,   // 5 GB
-    upload_limit_bytes:  500 * 1024 * 1024,          // 500 MB
+    upload_limit_bytes:  500 * 1024 * 1024,        // 500 MB
     max_projects: 3,
     team_seats: 1,
   },
@@ -39,97 +38,83 @@ subscriptionRoutes.get('/me', async (req, env) => {
   return json(sub);
 });
 
-// POST /subscriptions/checkout — create Stripe checkout session
+// POST /subscriptions/checkout — create Paystack checkout session
 subscriptionRoutes.post('/checkout', async (req, env) => {
   const payload = await requireAuth(req, env);
-  const { plan, successUrl, cancelUrl } = await req.json<any>();
+  const { plan, successUrl } = await req.json<any>();
 
-  const priceIds: Record<string, string> = {
-    pro:    env.STRIPE_PRICE_PRO    ?? 'price_pro',
-    studio: env.STRIPE_PRICE_STUDIO ?? 'price_studio',
+  const planCodes: Record<string, string> = {
+    pro:    env.PAYSTACK_PLAN_PRO    ?? 'PLN_pro',
+    studio: env.PAYSTACK_PLAN_STUDIO ?? 'PLN_studio',
   };
 
-  if (!priceIds[plan])
+  if (!planCodes[plan])
     throw Object.assign(new Error('Invalid plan'), { status: 400 });
 
   const user = await env.DB.prepare(
     `SELECT email FROM users WHERE id = ?`
   ).bind(payload.sub).first<{ email: string }>();
 
-  const sub = await env.DB.prepare(
-    `SELECT stripe_customer_id FROM subscriptions WHERE user_id = ?`
-  ).bind(payload.sub).first<{ stripe_customer_id: string | null }>();
+  // Paystack transaction initialization
+  // Note: amount is required by Paystack even for subscriptions (usually the first month's charge in kobo)
+  const amountKobo = plan === 'studio' ? 1500000 : 500000; // e.g. 15,000 NGN or 5,000 NGN
 
-  // Create or reuse Stripe customer
-  let customerId = sub?.stripe_customer_id;
-  if (!customerId) {
-    const custRes = await stripeRequest(env, 'POST', '/v1/customers', {
-      email: user?.email,
-      metadata: { userId: payload.sub },
-    });
-    customerId = custRes.id;
-    await env.DB.prepare(
-      `UPDATE subscriptions SET stripe_customer_id = ? WHERE user_id = ?`
-    ).bind(customerId, payload.sub).run();
-  }
-
-  const session = await stripeRequest(env, 'POST', '/v1/checkout/sessions', {
-    customer:            customerId,
-    mode:                'subscription',
-    payment_method_types: ['card'],
-    line_items:          [{ price: priceIds[plan], quantity: 1 }],
-    success_url:         successUrl ?? 'https://stemfer.com/dashboard?upgraded=1',
-    cancel_url:          cancelUrl  ?? 'https://stemfer.com/pricing',
-    metadata:            { userId: payload.sub, plan },
+  const session = await paystackRequest(env, 'POST', '/transaction/initialize', {
+    email: user?.email,
+    amount: amountKobo,
+    plan: planCodes[plan],
+    callback_url: successUrl ?? 'https://stemfer.com/dashboard?upgraded=1',
+    metadata: { userId: payload.sub, plan },
   });
 
-  return json({ url: session.url, sessionId: session.id });
+  return json({ url: session.data.authorization_url, reference: session.data.reference });
 });
 
 // POST /subscriptions/portal — billing portal session
 subscriptionRoutes.post('/portal', async (req, env) => {
   const payload = await requireAuth(req, env);
-  const { returnUrl } = await req.json<any>().catch(() => ({}));
 
   const sub = await env.DB.prepare(
-    `SELECT stripe_customer_id FROM subscriptions WHERE user_id = ?`
-  ).bind(payload.sub).first<{ stripe_customer_id: string | null }>();
+    `SELECT paystack_subscription_code FROM subscriptions WHERE user_id = ?`
+  ).bind(payload.sub).first<{ paystack_subscription_code: string | null }>();
 
-  if (!sub?.stripe_customer_id)
-    throw Object.assign(new Error('No billing account found'), { status: 400 });
+  if (!sub?.paystack_subscription_code)
+    throw Object.assign(new Error('No active Paystack subscription found'), { status: 400 });
 
-  const session = await stripeRequest(env, 'POST', '/v1/billing_portal/sessions', {
-    customer:   sub.stripe_customer_id,
-    return_url: returnUrl ?? 'https://stemfer.com/dashboard',
-  });
+  // Generate a manage subscription link
+  const linkRes = await paystackRequest(env, 'GET', `/subscription/${sub.paystack_subscription_code}/manage/link`);
 
-  return json({ url: session.url });
+  return json({ url: linkRes.data.link });
 });
 
-// POST /subscriptions/webhook — Stripe webhook handler
+// POST /subscriptions/webhook — Paystack webhook handler
 subscriptionRoutes.post('/webhook', async (req, env) => {
-  const sig     = req.headers.get('stripe-signature') ?? '';
-  const body    = await req.text();
-  const event   = await verifyStripeWebhook(body, sig, env.STRIPE_WEBHOOK_SECRET);
+  const sig  = req.headers.get('x-paystack-signature') ?? '';
+  const body = await req.text();
+  
+  await verifyPaystackWebhook(body, sig, env.PAYSTACK_SECRET_KEY);
+  const event = JSON.parse(body);
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session  = event.data.object;
-      const userId   = session.metadata?.userId;
-      const plan     = session.metadata?.plan;
+  switch (event.event) {
+    case 'charge.success': {
+      const data   = event.data;
+      const userId = data.metadata?.userId;
+      const plan   = data.metadata?.plan;
       if (!userId || !plan) break;
 
+      const customerCode = data.customer?.customer_code;
       const limits = PLANS[plan as keyof typeof PLANS] ?? PLANS.free;
+      
       await env.DB.prepare(
         `UPDATE subscriptions SET
            plan = ?, status = 'active',
-           stripe_subscription_id = ?,
+           paystack_customer_code = ?,
            storage_limit_bytes = ?, upload_limit_bytes = ?,
            max_projects = ?, team_seats = ?,
            updated_at = datetime('now')
          WHERE user_id = ?`
       ).bind(
-        plan, session.subscription,
+        plan, customerCode,
         limits.storage_limit_bytes, limits.upload_limit_bytes,
         limits.max_projects, limits.team_seats,
         userId
@@ -137,41 +122,43 @@ subscriptionRoutes.post('/webhook', async (req, env) => {
       break;
     }
 
-    case 'customer.subscription.updated': {
-      const sub    = event.data.object;
-      const status = sub.status;
+    case 'subscription.create': {
+      const data = event.data;
+      const subCode = data.subscription_code;
+      const customerCode = data.customer?.customer_code;
+      
       await env.DB.prepare(
-        `UPDATE subscriptions SET status = ?,
-           current_period_start = datetime(?, 'unixepoch'),
-           current_period_end   = datetime(?, 'unixepoch'),
-           cancel_at_period_end = ?,
+        `UPDATE subscriptions SET 
+           paystack_subscription_code = ?,
+           status = 'active',
+           current_period_end = datetime(?, 'unixepoch'),
            updated_at = datetime('now')
-         WHERE stripe_subscription_id = ?`
+         WHERE paystack_customer_code = ?`
       ).bind(
-        status,
-        sub.current_period_start,
-        sub.current_period_end,
-        sub.cancel_at_period_end ? 1 : 0,
-        sub.id
+        subCode,
+        Math.floor(new Date(data.next_payment_date).getTime() / 1000),
+        customerCode
       ).run();
       break;
     }
 
-    case 'customer.subscription.deleted': {
-      const sub = event.data.object;
+    case 'subscription.disable': {
+      const data = event.data;
+      const subCode = data.subscription_code;
       const limits = PLANS.free;
+      
       await env.DB.prepare(
         `UPDATE subscriptions SET
            plan = 'free', status = 'canceled',
-           stripe_subscription_id = NULL,
+           paystack_subscription_code = NULL,
            storage_limit_bytes = ?, upload_limit_bytes = ?,
            max_projects = ?, team_seats = ?,
            updated_at = datetime('now')
-         WHERE stripe_subscription_id = ?`
+         WHERE paystack_subscription_code = ?`
       ).bind(
         limits.storage_limit_bytes, limits.upload_limit_bytes,
         limits.max_projects, limits.team_seats,
-        sub.id
+        subCode
       ).run();
       break;
     }
@@ -180,58 +167,30 @@ subscriptionRoutes.post('/webhook', async (req, env) => {
   return json({ received: true });
 });
 
-async function stripeRequest(env: Env, method: string, path: string, body?: Record<string, any>) {
-  const params = body ? new URLSearchParams(flattenObject(body)).toString() : undefined;
-  const res = await fetch(`https://api.stripe.com${path}`, {
+async function paystackRequest(env: Env, method: string, path: string, body?: Record<string, any>) {
+  const res = await fetch(`https://api.paystack.co${path}`, {
     method,
     headers: {
-      Authorization:  `Bearer ${env.STRIPE_SECRET_KEY}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json',
     },
-    body: params,
+    body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json<any>();
-  if (!res.ok) throw Object.assign(new Error(data.error?.message ?? 'Stripe error'), { status: 400 });
+  if (!res.ok || !data.status) {
+    throw Object.assign(new Error(data.message ?? 'Paystack error'), { status: 400 });
+  }
   return data;
 }
 
-function flattenObject(obj: Record<string, any>, prefix = ''): Record<string, string> {
-  return Object.entries(obj).reduce((acc, [k, v]) => {
-    const key = prefix ? `${prefix}[${k}]` : k;
-    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-      Object.assign(acc, flattenObject(v, key));
-    } else if (Array.isArray(v)) {
-      v.forEach((item, i) => {
-        if (typeof item === 'object') {
-          Object.assign(acc, flattenObject(item, `${key}[${i}]`));
-        } else {
-          acc[`${key}[${i}]`] = String(item);
-        }
-      });
-    } else {
-      acc[key] = String(v);
-    }
-    return acc;
-  }, {} as Record<string, string>);
-}
-
-async function verifyStripeWebhook(payload: string, sig: string, secret: string): Promise<any> {
-  const parts     = sig.split(',');
-  const timestamp = parts.find(p => p.startsWith('t='))?.slice(2);
-  const v1        = parts.find(p => p.startsWith('v1='))?.slice(3);
-  if (!timestamp || !v1) throw Object.assign(new Error('Invalid signature'), { status: 400 });
-
-  const signed   = `${timestamp}.${payload}`;
-  const key      = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+async function verifyPaystackWebhook(payload: string, sig: string, secret: string): Promise<void> {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']
   );
-  const mac      = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signed));
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
   const expected = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('');
-
-  if (expected !== v1) throw Object.assign(new Error('Webhook signature mismatch'), { status: 400 });
-
-  const age = Date.now() / 1000 - parseInt(timestamp);
-  if (age > 300) throw Object.assign(new Error('Webhook too old'), { status: 400 });
-
-  return JSON.parse(payload);
+  
+  if (sig !== expected) {
+    throw Object.assign(new Error('Invalid signature'), { status: 400 });
+  }
 }

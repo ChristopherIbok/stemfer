@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 const PLANS = [
   {
     name:     'Free',
-    price:    '$0',
+    price:    '₦0',
     period:   'forever',
     storage:  '5 GB',
     projects: '3',
@@ -28,7 +28,7 @@ const PLANS = [
   },
   {
     name:     'Pro',
-    price:    '$19',
+    price:    '₦5,000',
     period:   'per month',
     storage:  '100 GB',
     projects: '50',
@@ -48,7 +48,7 @@ const PLANS = [
   },
   {
     name:     'Studio',
-    price:    '$79',
+    price:    '₦15,000',
     period:   'per month',
     storage:  '500 GB',
     projects: 'Unlimited',
@@ -149,7 +149,7 @@ export default function PricingPage() {
           <div className="mt-20 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
             {[
               { q: 'Can I switch plans?',    a: 'Yes. Upgrade or downgrade any time — changes take effect immediately.' },
-              { q: 'What payment methods?',  a: 'We accept all major cards via Stripe. No crypto, no surprises.' },
+              { q: 'What payment methods?',  a: 'We accept all major cards, bank transfers, and mobile money via Paystack.' },
               { q: 'What happens at expiry?', a: 'Files from transfers expire after 14 days regardless of plan. Project files are kept as long as you have storage.' },
             ].map(({ q, a }) => (
               <div key={q} className="p-5 rounded-xl border border-surface-300 bg-surface-100 text-left">

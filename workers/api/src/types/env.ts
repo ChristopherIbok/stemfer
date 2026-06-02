@@ -9,8 +9,10 @@ export interface Env {
   PRESENCE: DurableObjectNamespace;
   // Secrets (set via wrangler secret put)
   JWT_SECRET: string;
-  STRIPE_SECRET_KEY: string;
-  STRIPE_WEBHOOK_SECRET: string;
+  PAYSTACK_SECRET_KEY: string;
+  // --- Prices ---
+  PAYSTACK_PLAN_PRO?: string;
+  PAYSTACK_PLAN_STUDIO?: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   APPLE_CLIENT_ID: string;
@@ -19,6 +21,4 @@ export interface Env {
   // Vars
   ENVIRONMENT: string;
   CORS_ORIGIN: string;
-  STRIPE_PRICE_PRO?: string;
-  STRIPE_PRICE_STUDIO?: string;
 }

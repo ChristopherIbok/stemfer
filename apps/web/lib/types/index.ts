@@ -110,8 +110,8 @@ export interface Subscription {
   user_id: string;
   plan: Plan;
   status: 'active' | 'trialing' | 'past_due' | 'canceled' | 'paused';
-  stripe_customer_id?: string;
-  stripe_subscription_id?: string;
+  paystack_customer_code?: string;
+  paystack_subscription_code?: string;
   storage_limit_bytes: number;
   upload_limit_bytes: number;
   max_projects: number;

@@ -14,10 +14,6 @@ interface Props {
   onUploadComplete?: (fileId: string) => void;
 }
 
-const ACCEPTED = {
-  'audio/*':                  ['.wav', '.mp3', '.aiff', '.flac', '.ogg', '.m4a'],
-  'application/octet-stream': ['.als', '.logicx', '.song', '.ptx', '.rpp'],
-};
 
 export function ChunkedUploader({ projectId, sessionId, onUploadComplete }: Props) {
   const { uploads, startUpload, pauseUpload, resumeUpload, abortUpload } = useUploadStore();
@@ -40,7 +36,6 @@ export function ChunkedUploader({ projectId, sessionId, onUploadComplete }: Prop
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: ACCEPTED,
     multiple: true,
   });
 
@@ -73,10 +68,10 @@ export function ChunkedUploader({ projectId, sessionId, onUploadComplete }: Prop
           </div>
           <div>
             <p className="text-white font-medium text-sm">
-              {isDragActive ? 'Drop to upload' : 'Drag & drop audio or DAW files'}
+              {isDragActive ? 'Drop to upload' : 'Drag & drop any file'}
             </p>
             <p className="text-zinc-600 text-xs mt-1">
-              WAV, MP3, AIFF, FLAC, OGG · .als, .logicx, .song, .ptx, .rpp
+              All file types are supported
             </p>
           </div>
           <button
